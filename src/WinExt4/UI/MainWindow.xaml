@@ -144,6 +144,11 @@
             </Border>
             <Border x:Name="WarnBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource WarnBrush}">
                 <DockPanel>
+                    <Button x:Name="BtnFixType" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                            Click="OnFixPartitionType" Visibility="Collapsed" VerticalAlignment="Top">
+                        <TextBlock Text="Imposta tipo «Linux»" Foreground="{StaticResource WarnTextBrush}"
+                                   FontWeight="SemiBold" TextDecorations="Underline" />
+                    </Button>
                     <TextBlock Style="{StaticResource Icon}" Text="&#xE7BA;" Foreground="{StaticResource WarnTextBrush}"
                                Margin="0,0,8,0" />
                     <TextBlock x:Name="WarnBannerText" Foreground="{StaticResource WarnTextBrush}"
@@ -212,6 +217,9 @@
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding Source.Title}" FontWeight="SemiBold"
                                                        TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Style="{StaticResource Icon}" Text="&#xE7BA;" FontSize="12"
+                                                       Margin="6,0,0,0" Foreground="{StaticResource WarnTextBrush}"
+                                                       Visibility="{Binding WarningVisibility}" ToolTip="{Binding WarningText}" />
                                             <TextBlock Text="{Binding StateText}" Margin="6,0,0,0"
                                                        Foreground="{StaticResource AccentBrush}" FontSize="11.5"
                                                        VerticalAlignment="Center" />

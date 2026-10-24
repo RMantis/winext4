@@ -26,6 +26,26 @@ public sealed class SourceItem : INotifyPropertyChanged
 
     public double Opacity => Source.IsExt ? 1.0 : 0.55;
 
+    private List<PartitionChecks.Finding> _findings = new();
+
+    /// <summary>Partition table / filesystem inconsistencies (partition GUID checks).</summary>
+    public List<PartitionChecks.Finding> Findings
+    {
+        get => _findings;
+        set
+        {
+            _findings = value;
+            OnChanged();
+            OnChanged(nameof(WarningVisibility));
+            OnChanged(nameof(WarningText));
+        }
+    }
+
+    public System.Windows.Visibility WarningVisibility =>
+        _findings.Count > 0 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+    public string WarningText => string.Join("\n\n", _findings.Select(f => f.Text));
+
     /// <summary>"aperto", "scrittura", "montato su X:".</summary>
     public string StateText
     {

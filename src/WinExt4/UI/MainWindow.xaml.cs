@@ -247,6 +247,8 @@ public partial class MainWindow : Window
                     item = new SourceItem(s);
                 Sources.Add(item);
             }
+            foreach (var item in Sources)
+                item.Findings = PartitionChecks.Analyze(item.Source, all);
             var sel = Sources.FirstOrDefault(i => i.Source.Key == selectedKey);
             SourcesList.SelectedItem = sel;
         }
@@ -578,6 +580,52 @@ public partial class MainWindow : Window
             MessageBox.Show(this, ex.Message, "Montaggio non riuscito", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         UpdateUi();
+    }
+
+    /// <summary>Sets the partition type to "Linux filesystem" (GPT) / 0x83 (MBR).</summary>
+    private async void OnFixPartitionType(object sender, RoutedEventArgs e)
+    {
+        if (_current is not { } item || _operation is not null) return;
+        var s = item.Source;
+        string target = s.PartitionStyle == PartitionStyle.Gpt
+            ? $"Linux filesystem ({PartitionTypes.LinuxData})" : "Linux (0x83)";
+        if (MessageBox.Show(this,
+                $"Cambiare il tipo della partizione {s.PartitionNumber} da «{s.PartitionTypeText}» a «{target}»?\n\n" +
+                "Viene modificata solo la tabella delle partizioni, non i dati. Windows smetterà di assegnarle una lettera " +
+                "e di proporre la formattazione; Linux la monta come prima.\n\nIl volume verrà chiuso e riaperto.",
+                "Tipo di partizione", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            return;
+        bool rw = _vol?.ReadWrite == true;
+        await CloseVolumeAsync();
+        try
+        {
+            if (s.PartitionStyle == PartitionStyle.Gpt) PartitionTypes.Edit(s, gptType: PartitionTypes.LinuxData);
+            else PartitionTypes.Edit(s, mbrType: PartitionTypes.MbrLinux);
+            SetStatus("Tipo di partizione aggiornato.");
+        }
+        catch (Ext4Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Tipo di partizione", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        await RefreshSourcesAfterTableChangeAsync(s, rw);
+    }
+
+    /// <summary>Re-reads the partition tables and reopens <paramref name="s"/> if it is still there.</summary>
+    private async Task RefreshSourcesAfterTableChangeAsync(Ext4Source s, bool readWrite)
+    {
+        if (s.IsImage && s.ImagePath is { } img)
+        {
+            _imageSources.RemoveAll(x => x.ImagePath == img);
+            try { _imageSources.AddRange(SourceScanner.ScanImage(img)); } catch (Ext4Exception) { }
+        }
+        await Task.Delay(s.IsImage ? 0 : 1500); // let Windows re-read the disk layout
+        await RescanAsync();
+        var again = Sources.FirstOrDefault(i => i.Source.Container == s.Container && i.Source.PartitionNumber == s.PartitionNumber);
+        if (again is null || !again.Source.IsExt) return;
+        _suppressSelection = true;
+        SourcesList.SelectedItem = again;
+        _suppressSelection = false;
+        await OpenSourceAsync(again, readWrite);
     }
 
     private void OnOpenInExplorer(object sender, RoutedEventArgs e)
@@ -1220,6 +1268,9 @@ public partial class MainWindow : Window
             warnings.Add("Il filesystem non risulta smontato correttamente: su Linux è consigliato e2fsck.");
         if (info.HasErrors)
             warnings.Add("Il filesystem è segnato con errori: esegui e2fsck su Linux prima di scriverci.");
+        if (_current is not null)
+            warnings.AddRange(_current.Findings.Select(f => f.Text));
+        BtnFixType.Visibility = _current?.Findings.Any(f => f.CanFixType) == true ? Visibility.Visible : Visibility.Collapsed;
         WarnBanner.Visibility = warnings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         WarnBannerText.Text = string.Join(" ", warnings);
 

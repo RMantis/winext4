@@ -164,7 +164,48 @@ typedef struct e4_part {
 	char uuid[40];
 	char model[128];      /* disk vendor + product */
 	uint64_t disk_size;
+	/* partition table */
+	wchar_t container[96]; /* \\.\PhysicalDriveN or the image path */
+	int32_t part_style;   /* 0 = none, 1 = MBR, 2 = GPT */
+	int32_t mbr_type;     /* MBR partition type byte */
+	char gpt_type[40];    /* type GUID, e.g. 0FC63DAF-... */
+	char gpt_id[40];      /* unique partition GUID (PARTUUID) */
+	char gpt_name[80];    /* GPT partition name, UTF-8 */
+	uint64_t gpt_attributes;
+	uint32_t gpt_status;  /* E4_GPT_* flags, for the whole disk */
+	char disk_id[40];     /* GPT disk GUID or MBR signature */
+	uint32_t sector_size;
+	uint32_t reserved;
 } e4_part;
+
+/* gpt_status */
+#define E4_GPT_PRIMARY_OK 0x01   /* primary header and entry array CRCs valid */
+#define E4_GPT_BACKUP_OK 0x02    /* backup header and entry array CRCs valid */
+#define E4_GPT_COPIES_MATCH 0x04 /* primary and backup describe the same partitions */
+#define E4_GPT_CHECKED 0x80      /* the checks above were performed */
+
+/* e4_edit_partition */
+#define E4_EDIT_MBR_TYPE 0x1
+#define E4_EDIT_GPT_TYPE 0x2
+#define E4_EDIT_GPT_NAME 0x4
+#define E4_EDIT_GPT_ATTRIBUTES 0x8
+
+typedef struct e4_part_edit {
+	uint32_t mask;
+	int32_t mbr_type;
+	char gpt_type[40];
+	char gpt_name[80];     /* UTF-8, at most 36 UTF-16 units */
+	uint64_t gpt_attributes;
+} e4_part_edit;
+
+/*
+ * Changes type/name/attributes of a partition. @container is the
+ * e4_part.container (physical drive: needs administrator rights; Windows
+ * rewrites both GPT copies) or an image file (both copies and CRCs are
+ * rewritten here). Logical MBR partitions are not supported.
+ */
+E4_API int e4_edit_partition(const wchar_t *container, int partition_number,
+			     const e4_part_edit *edit);
 
 typedef int (__cdecl *e4_part_cb)(void *ctx, const e4_part *part);
 

@@ -10,6 +10,7 @@
 #include "uuid/uuid.h"
 #include "ext4core.h"
 #include "winio.h"
+#include "parttable.h"
 
 #define SB_OFFSET 1024
 #define SB_MAGIC_OFF 56
@@ -152,6 +153,7 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 		opened++;
 
 		memset(&base, 0, sizeof(base));
+		wcscpy(base.container, path);
 		base.disk_number = n;
 		base.bus_type = 0;
 		query_device(h, &base);
@@ -162,9 +164,18 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 				    &geo, sizeof(geo), &ret, NULL) &&
 		    geo.Geometry.BytesPerSector >= 512)
 			align = geo.Geometry.BytesPerSector;
+		base.sector_size = align;
 
 		layout = get_layout(h);
 		if (layout) {
+			if (layout->PartitionStyle == PARTITION_STYLE_GPT) {
+				base.part_style = 2;
+				pt_format_guid((const unsigned char *) &layout->Gpt.DiskId, base.disk_id);
+				base.gpt_status = pt_verify_gpt(h, align, base.disk_size, align);
+			} else if (layout->PartitionStyle == PARTITION_STYLE_MBR) {
+				base.part_style = 1;
+				sprintf(base.disk_id, "%08X", (unsigned) layout->Mbr.Signature);
+			}
 			for (i = 0; i < layout->PartitionCount; i++) {
 				PARTITION_INFORMATION_EX *pi =
 					&layout->PartitionEntry[i];
@@ -183,6 +194,21 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 				wcscpy(part.lock_path, part.device);
 				part.offset = 0;
 				part.length = (uint64_t) pi->PartitionLength.QuadPart;
+				if (pi->PartitionStyle == PARTITION_STYLE_GPT) {
+					int k;
+					unsigned char name[72];
+
+					pt_format_guid((const unsigned char *) &pi->Gpt.PartitionType, part.gpt_type);
+					pt_format_guid((const unsigned char *) &pi->Gpt.PartitionId, part.gpt_id);
+					for (k = 0; k < 36; k++) {
+						name[2 * k] = (unsigned char) pi->Gpt.Name[k];
+						name[2 * k + 1] = (unsigned char) (pi->Gpt.Name[k] >> 8);
+					}
+					pt_name_to_utf8(name, part.gpt_name, sizeof(part.gpt_name));
+					part.gpt_attributes = pi->Gpt.Attributes;
+				} else if (pi->PartitionStyle == PARTITION_STYLE_MBR) {
+					part.mbr_type = pi->Mbr.PartitionType;
+				}
 				probe(h, (uint64_t) pi->StartingOffset.QuadPart,
 				      align, &part);
 				found = 1;
@@ -221,6 +247,7 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 
 struct img_ctx {
 	HANDLE h;
+	e4_part table;	/* table-wide fields copied into every partition */
 	const wchar_t *path;
 	uint64_t size;
 	e4_part_cb cb;
@@ -230,7 +257,7 @@ struct img_ctx {
 };
 
 static void emit(struct img_ctx *ic, int number, uint64_t offset,
-		 uint64_t length)
+		 uint64_t length, const unsigned char *gpt_entry, int mbr_type)
 {
 	e4_part part;
 
@@ -238,7 +265,15 @@ static void emit(struct img_ctx *ic, int number, uint64_t offset,
 		return;
 	if (length == 0 || length > ic->size - offset)
 		length = ic->size - offset;
-	memset(&part, 0, sizeof(part));
+	part = ic->table;
+	wcsncpy(part.container, ic->path, 95);
+	if (gpt_entry) {
+		pt_format_guid(gpt_entry, part.gpt_type);
+		pt_format_guid(gpt_entry + 16, part.gpt_id);
+		part.gpt_attributes = le64(gpt_entry + 48);
+		pt_name_to_utf8(gpt_entry + 56, part.gpt_name, sizeof(part.gpt_name));
+	}
+	part.mbr_type = mbr_type;
 	wcsncpy(part.device, ic->path, 95);
 	part.offset = offset;
 	part.length = length;
@@ -262,6 +297,10 @@ static int scan_gpt(struct img_ctx *ic, uint32_t ssz)
 	if (w4_read_at(ic->h, ssz, hdr, sizeof(hdr), 1) ||
 	    memcmp(hdr, "EFI PART", 8))
 		return 0;
+	ic->table.part_style = 2;
+	ic->table.sector_size = ssz;
+	pt_format_guid(hdr + 56, ic->table.disk_id);
+	ic->table.gpt_status = pt_verify_gpt(ic->h, ssz, ic->size, 1);
 	table_lba = le64(hdr + 72);
 	count = le32(hdr + 80);
 	esz = le32(hdr + 84);
@@ -279,7 +318,7 @@ static int scan_gpt(struct img_ctx *ic, uint32_t ssz)
 		last = le64(ent + 40);
 		if (last < first)
 			continue;
-		emit(ic, (int) i + 1, first * ssz, (last - first + 1) * ssz);
+		emit(ic, (int) i + 1, first * ssz, (last - first + 1) * ssz, ent, 0);
 	}
 	return 1;
 }
@@ -296,7 +335,7 @@ static void scan_mbr(struct img_ctx *ic, const unsigned char *mbr)
 		if (type == 0 || len == 0)
 			continue;
 		if (!is_mbr_container(type)) {
-			emit(ic, i + 1, start * 512, len * 512);
+			emit(ic, i + 1, start * 512, len * 512, NULL, type);
 			continue;
 		}
 		/* Walk the chain of extended boot records (logical drives). */
@@ -316,7 +355,7 @@ static void scan_mbr(struct img_ctx *ic, const unsigned char *mbr)
 				if (l[4] && le32(l + 12))
 					emit(ic, ++number,
 					     (ebr + le32(l + 8)) * 512,
-					     (uint64_t) le32(l + 12) * 512);
+					     (uint64_t) le32(l + 12) * 512, NULL, l[4]);
 				if (!next[4] || !le32(next + 8))
 					break;
 				ebr = ext_base + le32(next + 8);
@@ -352,7 +391,7 @@ E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx)
 	memset(&whole, 0, sizeof(whole));
 	probe(ic.h, 0, 1, &whole);
 	if (whole.is_ext) {
-		emit(&ic, 0, 0, ic.size);
+		emit(&ic, 0, 0, ic.size, NULL, 0);
 		CloseHandle(ic.h);
 		return 0;
 	}
@@ -363,8 +402,12 @@ E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx)
 			if (sec[446 + i * 16 + 4] == 0xEE)
 				has_gpt_marker = 1;
 		if (!has_gpt_marker || !(scan_gpt(&ic, 512) ||
-					 scan_gpt(&ic, 4096)))
+					 scan_gpt(&ic, 4096))) {
+			ic.table.part_style = 1;
+			ic.table.sector_size = 512;
+			sprintf(ic.table.disk_id, "%08X", le32(sec + 440));
 			scan_mbr(&ic, sec);
+		}
 	}
 	CloseHandle(ic.h);
 	return ic.count || whole.is_ext ? 0 : E4_ENOTEXT;

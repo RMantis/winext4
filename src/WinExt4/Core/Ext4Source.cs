@@ -22,6 +22,25 @@ public sealed record Ext4Source
     public ulong DiskSize { get; init; }
     public string? ImagePath { get; init; }
 
+    /// <summary>\.\PhysicalDriveN or the image file: what partition edits operate on.</summary>
+    public string Container { get; init; } = "";
+    public PartitionStyle PartitionStyle { get; init; }
+    public int MbrType { get; init; }
+    public string GptType { get; init; } = "";
+    public string GptId { get; init; } = "";
+    public string GptName { get; init; } = "";
+    public ulong GptAttributes { get; init; }
+    public GptStatus GptStatus { get; init; }
+    public string DiskId { get; init; } = "";
+    public uint SectorSize { get; init; }
+
+    public string PartitionTypeText => PartitionStyle switch
+    {
+        PartitionStyle.Gpt => PartitionTypes.GptName(GptType),
+        PartitionStyle.Mbr => PartitionTypes.MbrName(MbrType),
+        _ => "nessuna tabella delle partizioni",
+    };
+
     public bool IsImage => ImagePath is not null;
     public bool IsUsb => BusType == 7;     // BusTypeUsb
     public bool IsSd => BusType == 12;     // BusTypeSd
@@ -94,6 +113,16 @@ public static unsafe class SourceScanner
             Model = Ext4Native.Utf8(p->model, 128),
             DiskSize = p->disk_size,
             ImagePath = c.ImagePath,
+            Container = Ext4Native.Wide(p->container, 96),
+            PartitionStyle = (PartitionStyle)p->part_style,
+            MbrType = p->mbr_type,
+            GptType = Ext4Native.Utf8(p->gpt_type, 40),
+            GptId = Ext4Native.Utf8(p->gpt_id, 40),
+            GptName = Ext4Native.Utf8(p->gpt_name, 80),
+            GptAttributes = p->gpt_attributes,
+            GptStatus = (GptStatus)p->gpt_status,
+            DiskId = Ext4Native.Utf8(p->disk_id, 40),
+            SectorSize = p->sector_size,
         });
         return 0;
     }

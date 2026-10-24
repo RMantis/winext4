@@ -44,11 +44,14 @@ static int __cdecl print_part(void *ctx, const e4_part *p)
 {
 	(void) ctx;
 	printf("disk=%d part=%d offset=%llu length=%llu bus=%d removable=%d "
-	       "ext=%d v%d label='%s' uuid=%s model='%s' dev=%ls\n",
+	       "ext=%d v%d label='%s' uuid=%s model='%s' style=%d mbr=0x%02x "
+	       "type=%s id=%s name='%s' attr=0x%llx gpt=0x%x diskid=%s dev=%ls\n",
 	       p->disk_number, p->partition_number,
 	       (unsigned long long) p->offset, (unsigned long long) p->length,
 	       p->bus_type, p->removable, p->is_ext, p->ext_version, p->label,
-	       p->uuid, p->model, p->device);
+	       p->uuid, p->model, p->part_style, p->mbr_type, p->gpt_type,
+	       p->gpt_id, p->gpt_name, (unsigned long long) p->gpt_attributes,
+	       p->gpt_status, p->disk_id, p->device);
 	return 0;
 }
 
@@ -109,6 +112,32 @@ static int run(int argc, char **argv)
 		err = e4_enum_image(w, print_part, NULL);
 		free(w);
 		return err ? fail("enum_image", err) : 0;
+	}
+	if (!strcmp(cmd, "setpart") && argc >= 5) {
+		/* e4cli setpart <container> <num> type=GUID|mbr=0x83|name=..|attr=0x.. */
+		e4_part_edit e;
+		wchar_t *w = widen(argv[2]);
+		int i;
+
+		memset(&e, 0, sizeof(e));
+		for (i = 4; i < argc; i++) {
+			if (!strncmp(argv[i], "type=", 5)) {
+				e.mask |= E4_EDIT_GPT_TYPE;
+				strncpy(e.gpt_type, argv[i] + 5, sizeof(e.gpt_type) - 1);
+			} else if (!strncmp(argv[i], "mbr=", 4)) {
+				e.mask |= E4_EDIT_MBR_TYPE;
+				e.mbr_type = (int) strtol(argv[i] + 4, NULL, 0);
+			} else if (!strncmp(argv[i], "name=", 5)) {
+				e.mask |= E4_EDIT_GPT_NAME;
+				strncpy(e.gpt_name, argv[i] + 5, sizeof(e.gpt_name) - 1);
+			} else if (!strncmp(argv[i], "attr=", 5)) {
+				e.mask |= E4_EDIT_GPT_ATTRIBUTES;
+				e.gpt_attributes = _strtoui64(argv[i] + 5, NULL, 0);
+			}
+		}
+		err = e4_edit_partition(w, atoi(argv[3]), &e);
+		free(w);
+		return err ? fail("setpart", err) : 0;
 	}
 	if (argc < 4)
 		return 2;

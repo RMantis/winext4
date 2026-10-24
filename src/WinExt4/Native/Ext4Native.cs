@@ -86,7 +86,36 @@ internal static unsafe class Ext4Native
         public fixed byte uuid[40];
         public fixed byte model[128];
         public ulong disk_size;
+        public fixed char container[96];
+        public int part_style;
+        public int mbr_type;
+        public fixed byte gpt_type[40];
+        public fixed byte gpt_id[40];
+        public fixed byte gpt_name[80];
+        public ulong gpt_attributes;
+        public uint gpt_status;
+        public fixed byte disk_id[40];
+        public uint sector_size;
+        public uint reserved;
     }
+
+    public const uint EditMbrType = 0x1;
+    public const uint EditGptType = 0x2;
+    public const uint EditGptName = 0x4;
+    public const uint EditGptAttributes = 0x8;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PartEdit
+    {
+        public uint mask;
+        public int mbr_type;
+        public fixed byte gpt_type[40];
+        public fixed byte gpt_name[80];
+        public ulong gpt_attributes;
+    }
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_edit_partition(string container, int partitionNumber, in PartEdit edit);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
     public static extern int e4_open(string path, ulong offset, ulong length, uint flags, out IntPtr fs);

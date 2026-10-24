@@ -36,6 +36,16 @@ Le immagini si aprono in tre modi: con «Apri immagine», trascinando il file ne
 - immagini disco con tabella MBR (anche partizioni logiche);
 - immagini disco con tabella GPT.
 
+### Controllo delle partizioni
+
+Per ogni partizione WinExt4 legge tipo (GUID GPT o tipo MBR), PARTUUID, nome e attributi GPT, e verifica CRC e copia di backup della tabella GPT. Accanto alla partizione compare un ⚠ (con i dettagli nel suggerimento e in un avviso quando la apri) se:
+- un filesystem ext sta su una partizione di tipo non Linux (per esempio «Microsoft basic data»): con **Imposta tipo «Linux»** si corregge la sola tabella delle partizioni, senza toccare i dati;
+- una partizione di tipo Linux non contiene ext;
+- la tabella GPT principale o quella di backup è danneggiata, o le due copie non coincidono;
+- due dischi collegati hanno lo stesso UUID del filesystem o lo stesso PARTUUID (tipico delle chiavette clonate).
+
+I dettagli sono anche nel pulsante ⓘ (informazioni sul filesystem).
+
 ### Avvio con Windows
 
 In *Impostazioni → Avvia con Windows* viene creata un'attività pianificata con privilegi elevati: nessun prompt UAC a ogni accesso. WinExt4 resta nell'area di notifica e si apre da solo quando colleghi un disco ext. Chiudere la finestra la nasconde soltanto; per uscire usa il clic destro sull'icona → Esci.
@@ -120,7 +130,6 @@ third_party/       e2fsprogs (sottomodulo)
 
 Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
 - hash e verifica di immagini, dischi e file (`.md5`);
-- controllo dei GUID delle partizioni;
 - azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
 - proprietà complete della partizione, con modifica di etichetta, UUID, spazio riservato, nome e tipo della partizione;

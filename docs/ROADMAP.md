@@ -5,7 +5,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 | # | Funzione | Dipende da | Dimensione |
 |---|---|---|---|
 | 1 | Hash e verifica (immagini, dischi, file) | — | piccola |
-| 2 | Controllo GUID delle partizioni | — | piccola |
+| 2 | ✅ Controllo GUID delle partizioni | — | piccola |
 | 3 | Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
 | 4 | Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
 | 5 | fsck integrato | — | media |
@@ -53,7 +53,9 @@ I punti 7, 8 e 9 sono miglioramenti dell'interfaccia indipendenti dagli altri: s
 
 ---
 
-## 2. Controllo GUID delle partizioni
+## 2. ✅ Controllo GUID delle partizioni
+
+*Implementato:* lettura di tipo/PARTUUID/nome/attributi, verifica delle due copie GPT, avvisi di incoerenza e duplicati, correzione del tipo (`e4_edit_partition`, anche per nome e attributi). La modifica sui dischi fisici è da verificare su hardware reale. Resta da fare: preferenze ricordate per singola chiavetta.
 
 ### Cosa serve
 

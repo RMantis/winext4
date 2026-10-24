@@ -182,7 +182,20 @@ public sealed class VolumeInfoDialog : SimpleDialog
         Row("Modalità", i.ReadWrite ? "lettura/scrittura" : "sola lettura");
         if (i.RwBlocker.Length > 0) Row("Scrittura impossibile", i.RwBlocker);
         if (i.Warnings.Length > 0) Row("Note", i.Warnings);
-        if (source is not null) Row("Dispositivo", source.Device + (source.Offset > 0 ? $" @ {source.Offset}" : ""));
+        if (source is not null)
+        {
+            Row("Dispositivo", source.Device + (source.Offset > 0 ? $" @ {source.Offset}" : ""));
+            if (source.PartitionStyle != PartitionStyle.None)
+            {
+                Row("Tabella partizioni", source.PartitionStyle == PartitionStyle.Gpt ? "GPT" : "MBR");
+                Row("Tipo partizione", source.PartitionTypeText);
+                if (source.GptId.Length > 0) Row("PARTUUID", source.GptId);
+                if (source.GptName.Length > 0) Row("Nome partizione", source.GptName);
+                var attrs = PartitionTypes.DescribeAttributes(source.GptAttributes).ToList();
+                if (attrs.Count > 0) Row("Attributi GPT", string.Join(", ", attrs));
+                if (source.DiskId.Length > 0) Row(source.PartitionStyle == PartitionStyle.Gpt ? "GUID del disco" : "Firma MBR", source.DiskId);
+            }
+        }
         Row("Motore", Ext4Volume.Version);
         Body.Children.Add(grid);
         AddButton("Chiudi", true, (_, _) => DialogResult = true).IsCancel = true;
