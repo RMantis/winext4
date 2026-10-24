@@ -12,8 +12,9 @@ Idee in ordine di priorità suggerita. L'ordine segue il rapporto tra rischio e 
 | 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
 | 7 | «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
 | 8 | Anteprima di testo e immagini nella finestra | — | piccola |
+| 9 | Proprietà della partizione: tutte le informazioni e modifica dei parametri modificabili | 2 per i GUID | media |
 
-I punti 7 e 8 sono miglioramenti dell'interfaccia indipendenti dagli altri: si possono fare in qualsiasi momento, anche per primi.
+I punti 7, 8 e 9 sono miglioramenti dell'interfaccia indipendenti dagli altri: si possono fare in qualsiasi momento, anche per primi.
 
 ---
 
@@ -326,9 +327,84 @@ Vedere al volo il contenuto dei file selezionati, senza estrarli né aprire altr
 
 ---
 
+## 9. Proprietà della partizione
+
+### Obiettivo
+
+Una finestra **Proprietà** per la partizione o l'immagine aperta, simile a quella dei dischi in Windows, che mostra **tutto** ciò che si sa su partizione e filesystem. I parametri che si possono cambiare in sicurezza diventano modificabili.
+
+Oggi esiste solo «Informazioni sul filesystem» (pulsante ⓘ senza selezione): è in sola lettura e mostra un sottoinsieme dei dati.
+
+### Informazioni mostrate
+
+**Partizione** (per le immagini, quelle della tabella interna all'immagine):
+- disco: modello, bus (USB/SD/interno), numero del disco, dimensione totale;
+- tabella delle partizioni (MBR o GPT), numero di partizione, offset di inizio e fine, dimensione;
+- **type GUID** GPT con nome leggibile («Linux filesystem data»), oppure tipo MBR (`0x83`);
+- **GUID univoco** della partizione (PARTUUID) e **nome della partizione** GPT;
+- attributi GPT (sola lettura, nascosta, *no automount*, obbligatoria);
+- percorso del volume Windows e lettera di unità, se Windows ne ha assegnata una.
+
+**Filesystem** (le stesse informazioni di `dumpe2fs -h`, in forma leggibile):
+- tipo (ext2/3/4), **etichetta**, **UUID**;
+- **spazio**: totale, **occupato**, **libero**, disponibile per gli utenti normali, riservato a root (in % e in blocchi). Un grafico a barre mostra occupato / libero / riservato;
+- **inode**: totali, usati, liberi, dimensione dell'inode;
+- **numero di file e di cartelle**:
+  - le cartelle si contano subito, sommando i contatori dei descrittori di gruppo;
+  - per i file c'è un pulsante «Conta» che percorre l'albero con progresso e annullamento. Dà il numero esatto di file regolari, cartelle, link simbolici e file speciali, più i file più grandi;
+- dimensione del blocco, blocchi per gruppo, numero di gruppi, `flex_bg`;
+- **funzionalità** attive (`extent`, `64bit`, `metadata_csum`, `inline_data`, `huge_file`…), ognuna con una descrizione al passaggio del mouse;
+- **journal**: presenza, dimensione, stato (pulito / da riprodurre);
+- **date**: creazione del filesystem, ultimo montaggio, ultima scrittura, ultimo controllo;
+- contatore dei montaggi e massimo, intervallo tra i controlli;
+- ultimo punto di montaggio su Linux;
+- **stato**: pulito, non smontato correttamente, con errori. Se ci sono errori: numero, primo e ultimo errore registrati (funzione, inode, blocco, data);
+- opzioni di montaggio predefinite, comportamento in caso di errore (*continue* / *remount-ro* / *panic*), uid/gid riservati, sistema che l'ha creato, revisione;
+- pulsante **«Copia tutto»** e vista «grezza» stile `dumpe2fs -h`, per incollare le informazioni in una segnalazione.
+
+### Cosa si può modificare
+
+Le modifiche richiedono la scrittura sbloccata (o la modalità bozza, punto 6) e una conferma che mostra il valore vecchio e quello nuovo. Funzionano come `tune2fs` o `e2label`: si modifica il superblocco e si scrive (`ext2fs_mark_super_dirty` + flush). Il checksum del superblocco viene ricalcolato in automatico.
+
+| Parametro | Equivalente Linux | Note |
+|---|---|---|
+| **Etichetta** del filesystem | `e2label` | Massimo 16 byte UTF-8. |
+| **UUID** del filesystem (nuovo casuale o specificato) | `tune2fs -U` | Va avvisato che `/etc/fstab`, GRUB o initramfs potrebbero farvi riferimento. Con `metadata_csum` e senza `metadata_csum_seed`, cambiare l'UUID obbliga a riscrivere tutti i checksum: proporre invece di attivare `metadata_csum_seed` (supportato dal kernel 4.4 in poi), che lo rende un'operazione sul solo superblocco. |
+| **Blocchi riservati** a root (%) e uid/gid riservati | `tune2fs -m / -r / -u / -g` | Utile su chiavette e dischi di dati, dove il 5% riservato è spazio sprecato. |
+| Numero massimo di montaggi, intervallo tra i controlli, azzeramento del contatore | `tune2fs -c / -i / -C` | |
+| Comportamento in caso di errore | `tune2fs -e` | |
+| Opzioni di montaggio predefinite (`acl`, `user_xattr`, `discard`…) | `tune2fs -o` | |
+| Cancellare l'ultimo punto di montaggio | `tune2fs -M` | |
+| **Nome della partizione** GPT | `sgdisk -c` | Solo su GPT. |
+| **Type GUID** / tipo MBR | `sgdisk -t`, `sfdisk --part-type` | Collegato al punto 2. |
+| **Attributi** GPT (per esempio *no automount*, che impedisce a Windows di assegnare una lettera) | `sgdisk -A` | |
+
+**Modifiche alla tabella delle partizioni:**
+- su un disco reale si fanno con `IOCTL_DISK_SET_DRIVE_LAYOUT_EX`, che aggiorna anche l'header di backup e i CRC;
+- dentro un'immagine si riscrivono header primario e di backup, con i CRC ricalcolati da noi.
+
+**Non modificabili** (si mostrano ma non si cambiano), con spiegazione:
+- dimensione del blocco e dell'inode, numero di inode: richiederebbero di ricreare il filesystem;
+- attivazione o disattivazione di funzionalità «strutturali» (`64bit`, `extent`, `metadata_csum`…): troppo rischiose senza i controlli completi di `tune2fs`/`e2fsck`. Eventualmente in futuro, insieme a fsck (punto 5).
+- **ridimensionamento** di partizione e filesystem (`resize2fs`): è una funzione a sé, da valutare separatamente (vedi «Altre idee»).
+
+### Implementazione
+
+- **Dati del filesystem.** Vanno ampliati `e4_get_info` / `e4_info` in `ext4core`: date di creazione e di controllo, contatori, errori registrati, opzioni predefinite, campi del journal, conteggio delle cartelle dai descrittori di gruppo. Poi una nuova funzione `e4_set_super(fs, campo, valore)` con una lista chiusa di campi ammessi, invece di esporre il superblocco grezzo.
+- **Dati della partizione.** `scan.c` legge già il layout del disco: bisogna esporre in `e4_part` type GUID, PARTUUID, nome e attributi GPT. Per le immagini c'è il parser GPT esistente.
+- **Interfaccia.** Una finestra con schede «Generale» (grafico e dati principali), «Partizione», «Filesystem», «Avanzate» (vista grezza). I campi modificabili diventano attivi solo con la scrittura sbloccata, con un pulsante «Applica» e conferma esplicita.
+- **Collegamenti con gli altri punti.** È il posto naturale per:
+  - i pulsanti «Calcola hash» (punto 1);
+  - i controlli e la correzione dei GUID (punto 2);
+  - «Azzera lo spazio libero» ed «Esporta immagine» (punto 3);
+  - «Controlla / Ripara» (punto 5).
+
+---
+
 ## Altre idee
 
 - Pulsante «Espelli» che chiude il volume e richiede la rimozione sicura del dispositivo (`CM_Request_Device_Eject`).
 - Test su dischi con settori fisici da 4K (4Kn) e su schede SD reali.
 - Installer firmato, con registrazione in «Apri con» (punto 7) e opzione per installare WinFsp.
 - Modifica degli attributi estesi e delle ACL POSIX dalla finestra Proprietà.
+- Ridimensionamento di partizione e filesystem (porting di `resize2fs`).

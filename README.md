@@ -123,6 +123,7 @@ Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.m
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
 - «Apri con…» per i file ext e WinExt4 nel menu «Apri con» di Windows;
 - anteprima di testo e immagini;
+- proprietà complete della partizione, con modifica di etichetta, UUID, spazio riservato, nome e tipo della partizione;
 - fsck integrato;
 - modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.
 
