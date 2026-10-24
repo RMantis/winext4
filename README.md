@@ -31,6 +31,19 @@ WinFsp serve solo per il pulsante «Monta su Windows». Tutto il resto funziona 
 5. **Monta su Windows** assegna una lettera di unità e il disco si usa da Esplora risorse e da qualsiasi programma. Prima del montaggio una finestra spiega come vengono trattati permessi e attributi e chiede proprietario e permessi da dare ai nuovi file.
 6. **Chiudi** (oppure torna in sola lettura) **prima di scollegare** un disco aperto in scrittura.
 
+### Modifica come bozza
+
+**Modifica come bozza** permette di modificare un disco, un'immagine o anche un'immagine dentro un archivio **senza scrivere sulla sorgente**:
+- ogni blocco modificato finisce in un file `.wx4draft` (in `%LOCALAPPDATA%\WinExt4\drafts`); la sorgente viene solo letta, quindi un disco non viene nemmeno bloccato per Windows;
+- si lavora come in scrittura normale: importare, rinominare, eliminare, cambiare permessi, anche montando la bozza su Windows;
+- la bozza sopravvive a chiusure, crash e riavvii: ogni salvataggio di libext2fs è un punto di ripristino, e quello che è stato scritto dopo l'ultimo viene scartato. Si riprende con «Modifica come bozza» (WinExt4 propone la bozza esistente) o aprendo il file `.wx4draft`, anche su un altro PC: la sorgente viene ritrovata dall'impronta (UUID e hash dell'inizio del filesystem), non dal percorso;
+- il banner della bozza offre:
+  - **Modifiche…**: l'elenco dei file aggiunti, modificati ed eliminati rispetto alla sorgente;
+  - **Esporta immagine…**: sorgente + bozza in una nuova immagine (anche compressa o VHD, con `.md5`/`.sha256`), senza toccare la sorgente;
+  - **Applica…**: scrive i blocchi della bozza sulla sorgente. Viene rifiutata se la sorgente è cambiata dopo la creazione della bozza. Se si interrompe si ripete e il risultato è lo stesso;
+  - **Scarta**: elimina la bozza.
+- se la sorgente aveva un journal da riprodurre, la riproduzione avviene nella bozza.
+
 Le immagini si aprono in tre modi: con «Apri immagine», trascinando il file nella finestra, oppure da Esplora risorse con «Apri con WinExt4». Quest'ultima voce si attiva in *Impostazioni → Mostra WinExt4 in «Apri con»*: la registrazione è per il solo utente e non cambia il programma predefinito di nessun tipo di file. Sono supportati:
 - filesystem «nudi», creati con `mkfs.ext4 file.img`;
 - immagini disco con tabella MBR (anche partizioni logiche);
@@ -72,7 +85,7 @@ I dettagli sono anche nel pulsante ⓘ (informazioni sul filesystem).
 - xz multi-blocco (`xz -T0`, o creato da WinExt4) e zstd a più frame si leggono un blocco alla volta;
 - xz e zstd a blocco unico vengono decompressi una volta in una cache sparsa (`%LOCALAPPDATA%\WinExt4\cache`, ripulita dopo 14 giorni di inutilizzo).
 
-Le immagini negli archivi sono in sola lettura.
+Le immagini negli archivi sono in sola lettura; per modificarle si usa **Modifica come bozza** e poi **Esporta immagine**.
 
 ### Avvio con Windows
 
@@ -140,6 +153,7 @@ dotnet run --project tests/MountTest -- tests/work/copia.img
 - `run_tests.sh` scrive sulle immagini con `e4cli.exe` (crea, sovrascrive, rinomina, sposta, cancella, tronca, crea link simbolici). Poi le verifica con **`e2fsck -fn` e `debugfs` di Linux**.
 - `MountTest` monta l'immagine con WinFsp e la usa con le normali API di file di Windows (copia, append, scrittura casuale, spostamento, attributi, date, eliminazione ricorsiva).
 - `tests/make_dirty_journal.sh` crea un'immagine con una transazione nel journal non ancora applicata, per provare la riproduzione del journal.
+- `tests/draft_test.sh` prova le bozze con `e4cli` (sorgente intatta, ripresa dopo una scrittura interrotta, impronta, applicazione idempotente verificata con `e2fsck`/`debugfs`); `tests/ui/draft_logic_test.ps1` e `tests/ui/draft_test.ps1` fanno lo stesso dalla libreria .NET e dalla GUI.
 
 ## Struttura
 
@@ -148,6 +162,7 @@ native/            ext4core.dll (C, MSVC)
   src/ext4core.c   API: open/close, lookup, readdir, read/write, create, mkdir, rename, unlink, ...
   src/winio.c      io_manager di libext2fs per volumi grezzi e immagini (allineamento settori, lock del volume, cache)
   src/scan.c       ricerca delle partizioni ext su dischi fisici e immagini MBR/GPT
+  src/overlay.c    bozze: delta copy-on-write a blocchi da 4 KB, commit, applicazione
   tools/e4cli.c    piccolo client a riga di comando usato dai test
 src/WinExt4/       GUI WPF (.NET 8) + montaggio WinFsp (Mount/Ext4FileSystem.cs)
 tests/             immagini di prova e test end-to-end
@@ -157,8 +172,7 @@ third_party/       e2fsprogs (sottomodulo)
 ## Roadmap
 
 Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
-- fsck integrato;
-- modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.
+- fsck integrato.
 
 ## Licenza
 

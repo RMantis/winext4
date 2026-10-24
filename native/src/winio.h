@@ -11,8 +11,12 @@
 /* Read callback for virtual devices (images inside archives): 0 = ok. */
 typedef int (__cdecl *w4_read_fn)(void *ctx, uint64_t pos, void *buf, uint32_t len);
 
+struct w4_overlay;
+
 typedef struct w4_dev {
-	HANDLE h;          /* INVALID_HANDLE_VALUE for callback devices */
+	HANDLE h;          /* INVALID_HANDLE_VALUE for callback/overlay devices */
+	struct w4_overlay *ov; /* draft: writes go to the delta file */
+	struct w4_dev *base;   /* the source under the overlay */
 	w4_read_fn read_cb;
 	void *read_ctx;
 	uint64_t offset;   /* start of the filesystem inside the handle */
@@ -31,6 +35,9 @@ typedef struct w4_dev {
 int w4_dev_open(const wchar_t *path, uint64_t offset, uint64_t length,
 		int flags, w4_dev **out);
 void w4_dev_close(w4_dev *dev);
+
+/* Draft device: @base is read, writes go to @delta (created if missing). Owns @base. */
+int w4_dev_open_overlay(w4_dev *base, const wchar_t *delta, const wchar_t *desc, w4_dev **out);
 
 /* Read-only device served by @cb; @size is the whole virtual device. */
 int w4_dev_open_cb(w4_read_fn cb, void *ctx, uint64_t size, uint64_t offset,

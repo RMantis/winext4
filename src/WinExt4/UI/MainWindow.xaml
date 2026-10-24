@@ -56,6 +56,14 @@
                             <TextBlock x:Name="RwText" Text=" Sblocca scrittura" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
+                    <Button x:Name="BtnDraft" Style="{StaticResource ToolButton}" Click="OnDraft" IsEnabled="False"
+                            AutomationProperties.AutomationId="BtnDraft"
+                            ToolTip="Modifica senza toccare la sorgente: le modifiche vanno in un file bozza da applicare o esportare dopo">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE70F;" />
+                            <TextBlock x:Name="DraftText" Text=" Modifica come bozza" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="BtnMount" Style="{StaticResource ToolButton}" Click="OnMount" IsEnabled="False">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock x:Name="MountIcon" Style="{StaticResource Icon}" Text="&#xE8CE;" />
@@ -128,6 +136,33 @@
                                Foreground="{StaticResource SafeTextBrush}" Margin="0,0,8,0" />
                     <TextBlock x:Name="ModeBannerText" TextWrapping="Wrap" Foreground="{StaticResource SafeTextBrush}"
                                VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+            <Border x:Name="DraftBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource InfoBrush}">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                        <Button x:Name="BtnDraftChanges" Style="{StaticResource ToolButton}" Click="OnDraftChanges"
+                                AutomationProperties.AutomationId="BtnDraftChanges">
+                            <TextBlock Text="Modifiche…" Foreground="{StaticResource InfoTextBrush}" TextDecorations="Underline" />
+                        </Button>
+                        <Button x:Name="BtnDraftExport" Style="{StaticResource ToolButton}" Click="OnDraftExport"
+                                AutomationProperties.AutomationId="BtnDraftExport">
+                            <TextBlock Text="Esporta immagine…" Foreground="{StaticResource InfoTextBrush}" TextDecorations="Underline" />
+                        </Button>
+                        <Button x:Name="BtnDraftApply" Style="{StaticResource ToolButton}" Click="OnDraftApply"
+                                AutomationProperties.AutomationId="BtnDraftApply">
+                            <TextBlock Text="Applica…" Foreground="{StaticResource InfoTextBrush}" FontWeight="SemiBold" TextDecorations="Underline" />
+                        </Button>
+                        <Button x:Name="BtnDraftDiscard" Style="{StaticResource ToolButton}" Click="OnDraftDiscard"
+                                AutomationProperties.AutomationId="BtnDraftDiscard">
+                            <TextBlock Text="Scarta" Foreground="{StaticResource InfoTextBrush}" TextDecorations="Underline" />
+                        </Button>
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource Icon}" Text="&#xE70F;" Foreground="{StaticResource InfoTextBrush}"
+                               Margin="0,0,8,0" />
+                    <TextBlock x:Name="DraftBannerText" Foreground="{StaticResource InfoTextBrush}"
+                               AutomationProperties.AutomationId="DraftBannerText"
+                               VerticalAlignment="Center" TextWrapping="Wrap" />
                 </DockPanel>
             </Border>
             <Border x:Name="MountBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource InfoBrush}">

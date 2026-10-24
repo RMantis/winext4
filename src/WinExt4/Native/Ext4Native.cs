@@ -8,6 +8,7 @@ internal static unsafe class Ext4Native
     private const string Dll = "ext4core.dll";
 
     public const uint OpenRw = 0x1;
+    public const uint OpenDraftView = 0x4;
     public const uint OpenNoRecovery = 0x2;
 
     public const uint SetMode = 0x01;
@@ -43,7 +44,53 @@ internal static unsafe class Ext4Native
         public long write_time;
         public fixed byte rw_blocker[160];
         public fixed byte warnings[256];
+        public int draft;
+        public uint reserved2;
+        public ulong draft_chunks;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Source
+    {
+        public char* path;
+        public ulong offset;
+        public ulong length;
+        public delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, uint, int> read;
+        public IntPtr read_ctx;
+        public ulong read_size;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DraftInfo
+    {
+        public ulong source_length;
+        public long created;
+        public ulong changed_chunks;
+        public ulong file_bytes;
+        public uint chunk_size;
+        public uint apply_state;
+        public fixed byte label[20];
+        public fixed byte uuid[40];
+        public fixed char source[260];
+    }
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_open_draft(in Source src, string delta, string desc, uint flags, out IntPtr fs);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_draft_get_info(string delta, out DraftInfo info);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_draft_check(string delta, in Source src);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_draft_apply(string delta, in Source src, int* cancel, ulong* progress);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_dev_size(IntPtr fs, out ulong size);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_dev_read(IntPtr fs, ulong pos, byte* buf, uint len);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct Stat

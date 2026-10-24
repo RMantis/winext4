@@ -74,12 +74,25 @@ static int __cdecl print_entry(void *ctx, const char *name, int len,
 	return 0;
 }
 
+/* E4DRAFT=<delta file> makes every command work on a draft of <dev>. */
 static int open_fs(const char *dev, const char *off, int rw, e4_fs **fs)
 {
 	wchar_t *w = widen(dev);
-	int err = e4_open(w, _strtoui64(off, NULL, 0), 0, rw ? E4_OPEN_RW : 0,
-			  fs);
+	const char *draft = getenv("E4DRAFT");
+	int err;
 
+	if (draft && *draft) {
+		e4_source src;
+		wchar_t *d = widen(draft);
+
+		memset(&src, 0, sizeof(src));
+		src.path = w;
+		src.offset = _strtoui64(off, NULL, 0);
+		err = e4_open_draft(&src, d, L"e4cli", 0, fs);
+		free(d);
+	} else {
+		err = e4_open(w, _strtoui64(off, NULL, 0), 0, rw ? E4_OPEN_RW : 0, fs);
+	}
 	free(w);
 	return err;
 }
@@ -112,6 +125,32 @@ static int run(int argc, char **argv)
 		err = e4_enum_image(w, print_part, NULL);
 		free(w);
 		return err ? fail("enum_image", err) : 0;
+	}
+	if (!strcmp(cmd, "draftinfo") && argc == 3) {
+		e4_draft_info di;
+		wchar_t *w = widen(argv[2]);
+
+		err = e4_draft_get_info(w, &di);
+		free(w);
+		if (err)
+			return fail("draftinfo", err);
+		printf("source_length=%llu chunks=%llu file=%llu apply_state=%u label='%s' uuid=%s source=%ls\n",
+		       (unsigned long long) di.source_length, (unsigned long long) di.changed_chunks,
+		       (unsigned long long) di.file_bytes, di.apply_state, di.label, di.uuid, di.source);
+		return 0;
+	}
+	if ((!strcmp(cmd, "draftcheck") || !strcmp(cmd, "draftapply")) && argc == 5) {
+		e4_source src;
+		wchar_t *w = widen(argv[2]), *d = widen(argv[4]);
+
+		memset(&src, 0, sizeof(src));
+		src.path = w;
+		src.offset = _strtoui64(argv[3], NULL, 0);
+		err = !strcmp(cmd, "draftcheck") ? e4_draft_check(d, &src)
+						 : e4_draft_apply(d, &src, NULL, NULL);
+		free(w);
+		free(d);
+		return err ? fail(cmd, err) : 0;
 	}
 	if (!strcmp(cmd, "setpart") && argc >= 5) {
 		/* e4cli setpart <container> <num> type=GUID|mbr=0x83|name=..|attr=0x.. */

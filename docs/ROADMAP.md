@@ -9,7 +9,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 | 3 | ✅ Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
 | 4 | ✅ Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
 | 5 | fsck integrato | — | media |
-| 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
+| 6 | ✅ Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
 | 7 | ✅ «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
 | 8 | ✅ Anteprima di testo e immagini nella finestra | — | piccola |
 | 9 | ✅ Proprietà della partizione: tutte le informazioni e modifica dei parametri modificabili | 2 per i GUID | media |
@@ -116,7 +116,7 @@ Come funziona:
 
 ## 4. ✅ Aprire immagini dentro archivi senza estrarle
 
-*Implementato:* dispositivi virtuali in ext4core (`e4_open_cb`/`e4_enum_cb`), decompressore deflate proprio con punti di ripresa e indice salvato, xz per blocchi (stream sintetico a blocco singolo passato a liblzma), zstd per frame, cache sparsa per gli stream a blocco unico, tar (GNU/PAX) e zip (zip64). La scrittura passerà dall'overlay (punto 6); restano da fare la scrittura su disco direttamente da un membro di un archivio e i VHD con accesso casuale.
+*Implementato:* dispositivi virtuali in ext4core (`e4_open_cb`/`e4_enum_cb`), decompressore deflate proprio con punti di ripresa e indice salvato, xz per blocchi (stream sintetico a blocco singolo passato a liblzma), zstd per frame, cache sparsa per gli stream a blocco unico, tar (GNU/PAX) e zip (zip64). La scrittura passa dalla bozza (punto 6); restano da fare la scrittura su disco direttamente da un membro di un archivio e i VHD con accesso casuale.
 
 ### Obiettivo
 
@@ -200,7 +200,17 @@ Per le **immagini**, se WSL è installato, si può lanciare `e2fsck` di WSL sul 
 
 ---
 
-## 6. Modifiche in sospeso (overlay / «bozza»)
+## 6. ✅ Modifiche in sospeso (overlay / «bozza»)
+
+*Implementato* con l'overlay a blocchi (scelta A), in `native/src/overlay.c`:
+- **formato** `.wx4draft`: header da 4 KB (magic `WX4DRAFT`, dimensione della sorgente, impronta SHA-512 dei primi 128 KB, etichetta, UUID, descrizione, stato di applicazione, crc32c), poi record da 32 byte + 4 KB di dati con crc32c, e record di *commit* scritti a ogni flush di libext2fs. Alla riapertura i record dopo l'ultimo commit vengono scartati;
+- i blocchi riscritti più volte tra due commit si aggiornano sul posto, e alla chiusura il file viene compattato (riscritto a parte e sostituito con `MoveFileEx`) quando più di metà è spazio superato;
+- **applica**: verifica l'impronta, scrive i blocchi con lo stato «in corso» nell'header e poi «applicata». Ripetere un'applicazione interrotta dà lo stesso risultato;
+- **esporta**: la bozza viene riaperta in sola lettura (`E4_OPEN_DRAFT_VIEW`), così l'immagine esportata risulta pulita, e passa dall'export del punto 3;
+- **modifiche**: confronto tra l'albero della sorgente e quello della bozza;
+- funziona anche su immagini dentro archivi (solo esportazione) e con il montaggio WinFsp.
+
+Differenze rispetto al progetto qui sotto: l'impronta usa l'hash dell'inizio del filesystem (superblocco e descrittori di gruppo) invece di un hash completo, e l'indice è ricostruito in memoria alla riapertura invece di essere salvato nel file.
 
 ### Obiettivo
 

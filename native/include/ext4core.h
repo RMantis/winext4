@@ -30,12 +30,16 @@ extern "C" {
 #define E4_ENOTEXT 901      /* no ext2/3/4 superblock found */
 #define E4_EUNSUPP_RW 902   /* filesystem has features we refuse to write */
 #define E4_ENEEDS_FSCK 903  /* filesystem marked with errors */
+#define E4_EDRAFT_MISMATCH 904 /* the draft was made from a different/changed source */
+#define E4_EDRAFT_BAD 905      /* not a draft file, or damaged header */
+#define E4_EDRAFT_APPLIED 906  /* the draft has already been (or is being) applied */
 
 typedef struct e4_fs e4_fs;
 
 /* e4_open flags */
 #define E4_OPEN_RW 0x1          /* open for writing (locks the volume) */
 #define E4_OPEN_NO_RECOVERY 0x2 /* RW: don't replay a dirty journal (fails instead) */
+#define E4_OPEN_DRAFT_VIEW 0x4  /* e4_open_draft: filesystem read-only (export, compare) */
 
 typedef struct e4_info {
 	char label[20];
@@ -60,6 +64,9 @@ typedef struct e4_info {
 	int64_t write_time;
 	char rw_blocker[160];     /* non-empty: why RW is refused */
 	char warnings[256];       /* human readable notes (unchecked fs, ...) */
+	int32_t draft;            /* opened as a draft (overlay) */
+	uint32_t reserved2;
+	uint64_t draft_chunks;    /* 4 KB chunks changed in the draft */
 } e4_info;
 
 typedef struct e4_stat {
@@ -111,6 +118,47 @@ typedef int (__cdecl *e4_read_cb)(void *ctx, uint64_t pos, void *buf, uint32_t l
 /* ---- filesystem lifetime ---- */
 E4_API int e4_open(const wchar_t *path, uint64_t offset, uint64_t length,
 		   uint32_t flags, e4_fs **out);
+/* Where a filesystem lives: a file/device path, or a read callback. */
+typedef struct e4_source {
+	const wchar_t *path;	/* NULL when @read is used */
+	uint64_t offset;
+	uint64_t length;
+	e4_read_cb read;
+	void *read_ctx;
+	uint64_t read_size;
+} e4_source;
+
+/*
+ * Draft mode: the source is only read; every change goes to the @delta file
+ * (created if missing, resumed otherwise). @desc describes the source for
+ * the user (stored in the delta). The handle is always read-write.
+ */
+E4_API int e4_open_draft(const e4_source *src, const wchar_t *delta, const wchar_t *desc,
+			 uint32_t flags, e4_fs **out);
+
+typedef struct e4_draft_info {
+	uint64_t source_length;
+	int64_t created;
+	uint64_t changed_chunks;
+	uint64_t file_bytes;
+	uint32_t chunk_size;
+	uint32_t apply_state;	/* 0 none, 1 interrupted, 2 applied */
+	char label[20];
+	char uuid[40];
+	wchar_t source[260];
+} e4_draft_info;
+
+E4_API int e4_draft_get_info(const wchar_t *delta, e4_draft_info *out);
+/* 0 if @delta belongs to @src (same, unchanged source). */
+E4_API int e4_draft_check(const wchar_t *delta, const e4_source *src);
+/* Writes the draft into the source (locked for writing). Can be re-run if interrupted. */
+E4_API int e4_draft_apply(const wchar_t *delta, const e4_source *src,
+			  volatile int32_t *cancel, volatile uint64_t *progress);
+
+/* Raw device content as the filesystem sees it (with the draft, if any). */
+E4_API int e4_dev_size(e4_fs *fs, uint64_t *size);
+E4_API int e4_dev_read(e4_fs *fs, uint64_t pos, void *buf, uint32_t len);
+
 /* Read-only filesystem on a virtual device of @size bytes, at @offset/@length. */
 E4_API int e4_open_cb(e4_read_cb read, void *read_ctx, uint64_t size,
 		      uint64_t offset, uint64_t length, uint32_t flags, e4_fs **out);

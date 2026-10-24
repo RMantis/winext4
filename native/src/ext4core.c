@@ -16,6 +16,7 @@
 #include "ext4core.h"
 #include "winio.h"
 #include "internal.h"
+#include "overlay.h"
 
 /* debugfs/journal.c */
 errcode_t ext2fs_check_ext3_journal(ext2_filsys fs);
@@ -371,6 +372,80 @@ E4_API int e4_open_cb(e4_read_cb read, void *read_ctx, uint64_t size,
 	return ret ? ret : open_on(dev, flags, out);
 }
 
+static int open_source_dev(const e4_source *src, int write, w4_dev **out)
+{
+	if (src->read) {
+		if (write)
+			return EROFS;
+		return w4_dev_open_cb(src->read, src->read_ctx, src->read_size, src->offset,
+				      src->length, out);
+	}
+	if (!src->path)
+		return EINVAL;
+	return w4_dev_open(src->path, src->offset, src->length, write ? W4_DEV_WRITE : 0, out);
+}
+
+E4_API int e4_open_draft(const e4_source *src, const wchar_t *delta, const wchar_t *desc,
+			 uint32_t flags, e4_fs **out)
+{
+	w4_dev *base, *dev;
+	int ret;
+
+	InitOnceExecuteOnce(&et_once, init_et, NULL, NULL);
+	if (!src || !delta || !out)
+		return EINVAL;
+	*out = NULL;
+	ret = open_source_dev(src, 0, &base);
+	if (ret)
+		return ret;
+	ret = w4_dev_open_overlay(base, delta, desc, &dev);
+	if (ret)
+		return ret;
+	/* a view never writes, so the image it shows stays marked clean */
+	return open_on(dev, (flags & E4_OPEN_DRAFT_VIEW) ? 0 : flags | E4_OPEN_RW, out);
+}
+
+E4_API int e4_draft_check(const wchar_t *delta, const e4_source *src)
+{
+	w4_dev *base;
+	int ret = open_source_dev(src, 0, &base);
+
+	if (ret)
+		return ret;
+	ret = ov_check(delta, base);
+	w4_dev_close(base);
+	return ret;
+}
+
+E4_API int e4_draft_apply(const wchar_t *delta, const e4_source *src,
+			  volatile int32_t *cancel, volatile uint64_t *progress)
+{
+	w4_dev *target;
+	int ret = open_source_dev(src, 1, &target);
+
+	if (ret)
+		return ret;
+	ret = ov_apply(delta, target, cancel, progress);
+	w4_dev_close(target);
+	return ret;
+}
+
+E4_API int e4_dev_size(e4_fs *f, uint64_t *size)
+{
+	*size = f->dev->length;
+	return 0;
+}
+
+E4_API int e4_dev_read(e4_fs *f, uint64_t pos, void *buf, uint32_t len)
+{
+	errcode_t err;
+
+	LOCK(f);
+	err = w4_dev_pread(f->dev, pos, buf, len);
+	UNLOCK(f);
+	return err ? EIO : 0;
+}
+
 /* Takes ownership of @dev. */
 static int open_on(w4_dev *dev, uint32_t flags, e4_fs **out)
 {
@@ -566,6 +641,10 @@ E4_API int e4_get_info(e4_fs *f, e4_info *info)
 	info->mount_time = ext2fs_get_tstamp(sb, s_mtime);
 	info->write_time = ext2fs_get_tstamp(sb, s_wtime);
 	strncpy(info->rw_blocker, f->rw_blocker, sizeof(info->rw_blocker) - 1);
+	if (f->dev->ov) {
+		info->draft = 1;
+		info->draft_chunks = ov_count(f->dev->ov);
+	}
 	strncpy(info->warnings, f->warnings, sizeof(info->warnings) - 1);
 	UNLOCK(f);
 	return 0;
@@ -1500,6 +1579,12 @@ E4_API const char *e4_strerror(int code)
 		return "The filesystem uses features that cannot be written safely";
 	case E4_ENEEDS_FSCK:
 		return "The filesystem has errors: run e2fsck before writing";
+	case E4_EDRAFT_MISMATCH:
+		return "The draft belongs to a different source, or the source changed since";
+	case E4_EDRAFT_BAD:
+		return "Not a WinExt4 draft file, or the file is damaged";
+	case E4_EDRAFT_APPLIED:
+		return "The draft has already been applied";
 	}
 	if (code > 0 && code < E4_ERRNO_MAX)
 		return strerror(code);

@@ -55,6 +55,7 @@ add_library(ext4core SHARED
   src/raw.c
   src/super.c
   src/maintenance.c
+  src/overlay.c
   src/compat.c)
 target_include_directories(ext4core PRIVATE include src)
 target_compile_definitions(ext4core PRIVATE EXT4CORE_BUILD)

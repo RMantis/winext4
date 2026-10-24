@@ -338,7 +338,7 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog
         {
             Title = "Apri immagine disco",
-            Filter = "Immagini e archivi (*.img;*.raw;*.bin;*.dd;*.ext*;*.gz;*.tgz;*.xz;*.zst;*.zip;*.tar)|*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2;*.gz;*.tgz;*.xz;*.zst;*.zip;*.tar|Tutti i file (*.*)|*.*",
+            Filter = "Immagini e archivi (*.img;*.raw;*.bin;*.dd;*.ext*;*.gz;*.tgz;*.xz;*.zst;*.zip;*.tar)|*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2;*.gz;*.tgz;*.xz;*.zst;*.zip;*.tar|Bozze WinExt4 (*.wx4draft)|*.wx4draft|Tutti i file (*.*)|*.*",
             Multiselect = true,
         };
         if (dlg.ShowDialog(this) == true)
@@ -349,13 +349,32 @@ public partial class MainWindow : Window
 
     private async Task OpenImageAsync(string path)
     {
+        if (path.EndsWith(Drafts.Extension, StringComparison.OrdinalIgnoreCase))
+        {
+            await OpenDraftFileAsync(path);
+            return;
+        }
+        var found = await LoadImageAsync(path);
+        if (found is null) return;
+        var first = found.FirstOrDefault(s => s.IsExt);
+        if (first is null)
+        {
+            SetStatus($"{Path.GetFileName(path)}: nessun filesystem ext trovato.");
+            return;
+        }
+        SelectAndOpen(first);
+    }
+
+    /// <summary>Scans an image or archive and adds its partitions to the list.</summary>
+    private async Task<List<Ext4Source>?> LoadImageAsync(string path)
+    {
         List<Ext4Source> found;
         try
         {
             if (Core.Archives.ArchiveOpener.IsArchive(path))
             {
                 var r = await OpenArchiveAsync(path);
-                if (r is null) return;
+                if (r is null) return null;
                 found = r;
             }
             else
@@ -367,7 +386,7 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, $"{Path.GetFileName(path)}\n\n{ex.Message}", "Apri immagine",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            return null;
         }
         _imageSources.RemoveAll(s => string.Equals(s.ImagePath, path, StringComparison.OrdinalIgnoreCase));
         _imageSources.AddRange(found);
@@ -377,13 +396,7 @@ public partial class MainWindow : Window
 
         var all = Sources.Select(i => i.Source).Where(s => !s.IsImage).Concat(_imageSources).ToList();
         ApplySources(all);
-        var first = found.FirstOrDefault(s => s.IsExt);
-        if (first is null)
-        {
-            SetStatus($"{Path.GetFileName(path)}: nessun filesystem ext trovato.");
-            return;
-        }
-        SelectAndOpen(first);
+        return found;
     }
 
     /// <summary>Indexes an archive (once; the index is cached) and scans every image inside it.</summary>
@@ -437,7 +450,8 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "Attendi la fine dell'operazione in corso.", "WinExt4");
             return false;
         }
-        if (_mount is not null || _vol.ReadWrite)
+        // a draft keeps its changes in its file: leaving it needs no confirmation
+        if (_mount is not null || (_vol.ReadWrite && !IsDraft))
         {
             var r = MessageBox.Show(this,
                 "Il volume attuale è " + (_mount is not null ? $"montato su {_mount.DriveLetter}" : "aperto in scrittura") +
@@ -463,6 +477,7 @@ public partial class MainWindow : Window
             SetStatus(readWrite && info.JournalReplayed
                 ? "Aperto in scrittura. Il journal conteneva modifiche non applicate ed è stato riprodotto."
                 : $"Aperto {info.Kind} «{(info.Label.Length > 0 ? info.Label : item.Source.Title)}».");
+            if (!readWrite) _ = HintDraftsAsync(item);
         }
         catch (Ext4Exception ex)
         {
@@ -830,10 +845,10 @@ public partial class MainWindow : Window
         if (_contextSource?.Source is { } s) await HashTargetAsync(RawTarget.WholeDisk(s), ImageName(s, true));
     }
 
-    private async Task ExportAsync(Ext4Source s, RawTarget t, bool whole)
+    private async Task ExportAsync(Ext4Source s, RawTarget t, bool whole, string? name = null)
     {
         ulong size = t.Length > 0 ? t.Length : s.DiskSize;
-        var d = new ExportImageDialog(t, size, ImageName(s, whole)) { Owner = this };
+        var d = new ExportImageDialog(t, size, name ?? ImageName(s, whole)) { Owner = this };
         if (d.ShowDialog() != true) return;
         var (ok, r) = await RunJobAsync("Esportazione", (p, ct) => Core.Imaging.Export(t, d.ImagePath, d.SelectedFormat, d.Sparse, d.Verify, p, ct));
         if (ok && r is not null)
@@ -1546,12 +1561,15 @@ public partial class MainWindow : Window
         bool busy = _operation is not null;
         int sel = FileList.SelectedItems.Count;
 
-        BtnReadWrite.IsEnabled = open && !busy && _current?.Source.IsInArchive != true;
+        bool draft = IsDraft;
+        BtnReadWrite.IsEnabled = open && !busy && !draft && _current?.Source.IsInArchive != true;
         BtnReadWrite.ToolTip = _current?.Source.IsInArchive == true
-            ? "Le immagini dentro un archivio sono in sola lettura: estraile o esportale per modificarle"
-            : null;
-        RwIcon.Text = rw ? "" : "";
-        RwText.Text = rw ? " Torna in sola lettura" : " Sblocca scrittura";
+            ? "Le immagini dentro un archivio sono in sola lettura: usa «Modifica come bozza» ed esporta il risultato"
+            : draft ? "Sei in modalità bozza: la sorgente non viene scritta" : null;
+        BtnDraft.IsEnabled = open && !busy && (draft || !rw);
+        DraftText.Text = draft ? " Chiudi bozza" : " Modifica come bozza";
+        RwIcon.Text = rw && !draft ? "" : "";
+        RwText.Text = rw && !draft ? " Torna in sola lettura" : " Sblocca scrittura";
         BtnMount.IsEnabled = open && !busy;
         MountIcon.Text = _mount is null ? "" : "";
         MountText.Text = _mount is null ? " Monta su Windows" : $" Smonta {_mount.DriveLetter}";
@@ -1569,19 +1587,28 @@ public partial class MainWindow : Window
         FileList.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
 
         if (_current is not null)
-            _current.StateText = _mount is not null ? $"· {_mount.DriveLetter}" : rw ? "· scrittura" : "· aperto";
+            _current.StateText = _mount is not null ? $"· {_mount.DriveLetter}" : draft ? "· bozza" : rw ? "· scrittura" : "· aperto";
 
         if (!open)
         {
-            ModeBanner.Visibility = MountBanner.Visibility = WarnBanner.Visibility = Visibility.Collapsed;
+            ModeBanner.Visibility = MountBanner.Visibility = WarnBanner.Visibility = DraftBanner.Visibility = Visibility.Collapsed;
             FsSummary.Text = "";
             Title = "WinExt4";
             return;
         }
 
         var info = _vol!.GetInfo();
-        ModeBanner.Visibility = Visibility.Visible;
-        if (rw)
+        ModeBanner.Visibility = draft ? Visibility.Collapsed : Visibility.Visible;
+        DraftBanner.Visibility = draft ? Visibility.Visible : Visibility.Collapsed;
+        if (draft)
+        {
+            DraftBannerText.Text = $"Bozza: la sorgente non viene toccata, le modifiche vanno in {Path.GetFileName(_vol.DraftPath)} " +
+                                   $"({Format.Size(info.DraftChunks * 4096)} modificati).";
+            DraftBannerText.ToolTip = _vol.DraftPath;
+            BtnDraftApply.IsEnabled = !busy && _current?.Source.IsInArchive != true;
+            BtnDraftChanges.IsEnabled = BtnDraftExport.IsEnabled = BtnDraftDiscard.IsEnabled = !busy;
+        }
+        else if (rw)
         {
             ModeBanner.Background = (System.Windows.Media.Brush)FindResource("WarnBrush");
             ModeBannerIcon.Foreground = ModeBannerText.Foreground = (System.Windows.Media.Brush)FindResource("WarnTextBrush");
@@ -1617,7 +1644,7 @@ public partial class MainWindow : Window
 
         FsSummary.Text = $"{info.Kind} · {(info.Label.Length > 0 ? info.Label + " · " : "")}" +
                          $"{Format.Size(info.FreeBytes)} liberi di {Format.Size(info.TotalBytes)}";
-        Title = $"WinExt4 — {(info.Label.Length > 0 ? info.Label : _current?.Source.Title)}{(rw ? " (scrittura)" : "")}";
+        Title = $"WinExt4 — {(info.Label.Length > 0 ? info.Label : _current?.Source.Title)}{(draft ? " (bozza)" : rw ? " (scrittura)" : "")}";
     }
 
     private async void OnClosing(object? sender, CancelEventArgs e)

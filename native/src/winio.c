@@ -19,6 +19,7 @@
 #include "ext2fs/ext2fs.h"
 #include "ext4core.h"
 #include "winio.h"
+#include "overlay.h"
 
 #define W4_BOUNCE_SIZE (1024 * 1024)
 #define W4_CACHE_SLOTS 4096
@@ -191,6 +192,12 @@ void w4_dev_close(w4_dev *dev)
 
 	if (!dev)
 		return;
+	if (dev->ov) {
+		ov_close(dev->ov);
+		w4_dev_close(dev->base);
+		free(dev);
+		return;
+	}
 	if (dev->h != INVALID_HANDLE_VALUE && dev->h) {
 		if (dev->writable)
 			FlushFileBuffers(dev->h);
@@ -252,6 +259,8 @@ static errcode_t dev_io(w4_dev *dev, uint64_t pos, void *buf, size_t len,
 		return write ? EXT2_ET_SHORT_WRITE : EXT2_ET_SHORT_READ;
 	if (write && !dev->writable)
 		return EXT2_ET_RO_FILSYS;
+	if (dev->ov)
+		return write ? ov_write(dev->ov, pos, buf, len) : ov_read(dev->ov, pos, buf, len);
 
 	abs = dev->offset + pos;
 
@@ -304,6 +313,32 @@ static errcode_t dev_io(w4_dev *dev, uint64_t pos, void *buf, size_t len,
 	}
 	_aligned_free(bounce);
 	return err;
+}
+
+int w4_dev_open_overlay(w4_dev *base, const wchar_t *delta, const wchar_t *desc, w4_dev **out)
+{
+	w4_dev *dev;
+	int ret;
+
+	*out = NULL;
+	dev = calloc(1, sizeof(*dev));
+	if (!dev) {
+		w4_dev_close(base);
+		return ENOMEM;
+	}
+	ret = ov_open(delta, base, desc, &dev->ov);
+	if (ret) {
+		w4_dev_close(base);
+		free(dev);
+		return ret;
+	}
+	dev->h = INVALID_HANDLE_VALUE;
+	dev->base = base;
+	dev->align = 1;
+	dev->writable = 1;
+	dev->length = base->length;
+	*out = dev;
+	return 0;
 }
 
 int w4_dev_open_cb(w4_read_fn cb, void *ctx, uint64_t size, uint64_t offset,
@@ -584,6 +619,8 @@ static errcode_t w4_flush(io_channel channel)
 {
 	struct w4_chan *c = channel->private_data;
 
+	if (c->dev->ov)
+		return ov_commit(c->dev->ov);
 	if (c->dev->writable && !FlushFileBuffers(c->dev->h)) {
 		c->dev->last_error = GetLastError();
 		return EXT2_ET_SHORT_WRITE;

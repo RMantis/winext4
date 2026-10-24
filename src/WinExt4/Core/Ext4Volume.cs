@@ -19,6 +19,8 @@ public sealed unsafe class Ext4Volume : IDisposable
 
     public Ext4Source Source { get; }
     public bool ReadWrite { get; }
+    /// <summary>Delta file when opened as a draft (all writes go there).</summary>
+    public string? DraftPath { get; private init; }
 
     private Ext4Volume(IntPtr fs, Ext4Source source, bool rw)
     {
@@ -47,6 +49,61 @@ public sealed unsafe class Ext4Volume : IDisposable
             readWrite ? Ext4Native.OpenRw : 0, out IntPtr fs);
         Ext4Exception.Check(err, readWrite ? "Apertura in scrittura" : "Apertura");
         return new Ext4Volume(fs, source, readWrite);
+    }
+
+    /// <summary>
+    /// Opens <paramref name="source"/> as a draft: the source is only read and
+    /// every change goes to <paramref name="deltaPath"/> (created or resumed).
+    /// </summary>
+    public static Ext4Volume OpenDraft(Ext4Source source, string deltaPath, string description, bool view = false)
+    {
+        GCHandle h = default;
+        try
+        {
+            var src = Drafts.SourceOf(source, ref h, out var pin);
+            using (pin)
+            {
+                int e = Ext4Native.e4_open_draft(in src, deltaPath, description, view ? Ext4Native.OpenDraftView : 0, out IntPtr fs);
+                Ext4Exception.Check(e, "Apertura della bozza");
+                var v = new Ext4Volume(fs, source, !view) { DraftPath = deltaPath };
+                if (h.IsAllocated) v._virtual = h;
+                h = default;
+                return v;
+            }
+        }
+        finally
+        {
+            if (h.IsAllocated) h.Free();
+        }
+    }
+
+    /// <summary>Raw device content as the filesystem sees it (draft included).</summary>
+    public Archives.IRandomAccess DeviceAccess() => new DeviceView(this);
+
+    private sealed class DeviceView : Archives.IRandomAccess
+    {
+        private readonly Ext4Volume _v;
+
+        public DeviceView(Ext4Volume v)
+        {
+            _v = v;
+            Ext4Native.e4_dev_size(v.Fs, out ulong size);
+            Length = (long)size;
+        }
+
+        public long Length { get; }
+
+        public void Read(long pos, Span<byte> dst)
+        {
+            int n = (int)Math.Clamp(Length - pos, 0, dst.Length);
+            fixed (byte* p = dst)
+                Ext4Exception.Check(Ext4Native.e4_dev_read(_v.Fs, (ulong)pos, p, (uint)n), "Lettura");
+            dst[n..].Clear();
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     private IntPtr Fs => _fs != IntPtr.Zero ? _fs : throw new ObjectDisposedException(nameof(Ext4Volume));
@@ -109,6 +166,8 @@ public sealed unsafe class Ext4Volume : IDisposable
             Warnings = Ext4Native.Utf8(i.warnings, 256),
             LastMount = i.mount_time > 0 ? DateTimeOffset.FromUnixTimeSeconds(i.mount_time).LocalDateTime : null,
             LastWrite = i.write_time > 0 ? DateTimeOffset.FromUnixTimeSeconds(i.write_time).LocalDateTime : null,
+            IsDraft = i.draft != 0,
+            DraftChunks = i.draft_chunks,
             FeatureCompat = i.feature_compat,
             FeatureIncompat = i.feature_incompat,
             FeatureRoCompat = i.feature_ro_compat,
