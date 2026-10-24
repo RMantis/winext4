@@ -44,6 +44,7 @@ public partial class App : Application
         ThreadPool.RegisterWaitForSingleObject(_showEvent, (_, _) => Dispatcher.BeginInvoke(OnShowRequested), null, -1, false);
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        ThreadPool.QueueUserWorkItem(_ => Core.Archives.ArchiveStore.Cleanup());
         _window = new MainWindow();
         MainWindow = _window;
         _window.Closed += (_, _) => ExitApp();

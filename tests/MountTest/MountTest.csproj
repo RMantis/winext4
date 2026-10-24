@@ -12,7 +12,7 @@
     <NativeOut>$(MSBuildThisFileDirectory)..\..\native\build\Release</NativeOut>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\..\src\WinExt4\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\WinExt4\Core\**\*.cs" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\..\src\WinExt4\Mount\*.cs" Link="Mount\%(Filename)%(Extension)" />
     <Compile Include="..\..\src\WinExt4\Native\*.cs" Link="Native\%(Filename)%(Extension)" />
     <Reference Include="winfsp-msil">

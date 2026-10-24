@@ -119,14 +119,14 @@ struct gpt_copy {
 	int ok;
 };
 
-static void read_copy(HANDLE h, uint32_t ssz, uint32_t align, uint64_t lba,
+static void read_copy(const w4_reader *r, uint32_t ssz, uint64_t lba,
 		      struct gpt_copy *c)
 {
 	unsigned char tmp[512];
 	uint32_t hsize, n, esz;
 
 	memset(c, 0, sizeof(*c));
-	if (w4_read_at(h, lba * ssz, c->hdr, sizeof(c->hdr), align) ||
+	if (w4_read(r, lba * ssz, c->hdr, sizeof(c->hdr)) ||
 	    memcmp(c->hdr, "EFI PART", 8))
 		return;
 	hsize = rd32(c->hdr + GPT_HDR_SIZE);
@@ -143,26 +143,26 @@ static void read_copy(HANDLE h, uint32_t ssz, uint32_t align, uint64_t lba,
 	c->entries_len = n * esz;
 	c->entries = malloc(c->entries_len);
 	if (!c->entries ||
-	    w4_read_at(h, rd64(c->hdr + GPT_ENTRIES_LBA) * ssz, c->entries,
-		       c->entries_len, align))
+	    w4_read(r, rd64(c->hdr + GPT_ENTRIES_LBA) * ssz, c->entries,
+		    c->entries_len))
 		return;
 	c->ok = pt_crc32(c->entries, c->entries_len) ==
 		rd32(c->hdr + GPT_ENTRIES_CRC);
 }
 
-uint32_t pt_verify_gpt(HANDLE h, uint32_t ssz, uint64_t size, uint32_t align)
+uint32_t pt_verify_gpt(const w4_reader *r, uint32_t ssz, uint64_t size)
 {
 	struct gpt_copy p, b;
 	uint64_t backup_lba;
 	uint32_t st = E4_GPT_CHECKED;
 
-	read_copy(h, ssz, align, 1, &p);
+	read_copy(r, ssz, 1, &p);
 	if (p.ok)
 		st |= E4_GPT_PRIMARY_OK;
 	backup_lba = p.ok ? rd64(p.hdr + GPT_BACKUP_LBA) : size / ssz - 1;
 	if (backup_lba * ssz >= size)
 		backup_lba = size / ssz - 1;
-	read_copy(h, ssz, align, backup_lba, &b);
+	read_copy(r, ssz, backup_lba, &b);
 	if (b.ok)
 		st |= E4_GPT_BACKUP_OK;
 	if (p.ok && b.ok && p.entries_len == b.entries_len &&
@@ -213,8 +213,9 @@ static int edit_gpt_copy(HANDLE h, uint32_t ssz, uint64_t lba, int index,
 	unsigned char *ent, guid[16];
 	uint32_t esz, hsize;
 	int ret = 0;
+	w4_reader rd = { h, 1, NULL };
 
-	read_copy(h, ssz, 1, lba, &c);
+	read_copy(&rd, ssz, lba, &c);
 	if (!c.ok) {
 		free(c.entries);
 		return EIO;

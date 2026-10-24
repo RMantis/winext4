@@ -7,7 +7,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 | 1 | ✅ Hash e verifica (immagini, dischi, file) | — | piccola |
 | 2 | ✅ Controllo GUID delle partizioni | — | piccola |
 | 3 | ✅ Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
-| 4 | Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
+| 4 | ✅ Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
 | 5 | fsck integrato | — | media |
 | 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
 | 7 | ✅ «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
@@ -114,7 +114,9 @@ Come funziona:
 
 ---
 
-## 4. Aprire immagini dentro archivi senza estrarle
+## 4. ✅ Aprire immagini dentro archivi senza estrarle
+
+*Implementato:* dispositivi virtuali in ext4core (`e4_open_cb`/`e4_enum_cb`), decompressore deflate proprio con punti di ripresa e indice salvato, xz per blocchi (stream sintetico a blocco singolo passato a liblzma), zstd per frame, cache sparsa per gli stream a blocco unico, tar (GNU/PAX) e zip (zip64). La scrittura passerà dall'overlay (punto 6); restano da fare la scrittura su disco direttamente da un membro di un archivio e i VHD con accesso casuale.
 
 ### Obiettivo
 

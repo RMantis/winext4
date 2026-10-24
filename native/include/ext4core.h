@@ -105,9 +105,15 @@ typedef struct e4_times {
 typedef int (__cdecl *e4_dir_cb)(void *ctx, const char *name, int name_len,
 				 uint32_t ino, int file_type);
 
+/* Read callback for virtual devices (e.g. an image inside an archive): 0 = ok. */
+typedef int (__cdecl *e4_read_cb)(void *ctx, uint64_t pos, void *buf, uint32_t len);
+
 /* ---- filesystem lifetime ---- */
 E4_API int e4_open(const wchar_t *path, uint64_t offset, uint64_t length,
 		   uint32_t flags, e4_fs **out);
+/* Read-only filesystem on a virtual device of @size bytes, at @offset/@length. */
+E4_API int e4_open_cb(e4_read_cb read, void *read_ctx, uint64_t size,
+		      uint64_t offset, uint64_t length, uint32_t flags, e4_fs **out);
 E4_API int e4_close(e4_fs *fs);
 E4_API int e4_get_info(e4_fs *fs, e4_info *info);
 E4_API int e4_flush(e4_fs *fs);
@@ -283,6 +289,9 @@ typedef int (__cdecl *e4_part_cb)(void *ctx, const e4_part *part);
 E4_API int e4_enum_disks(e4_part_cb cb, void *ctx);
 /* Raw image (.img): whole-filesystem image or an MBR/GPT disk image. */
 E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx);
+/* Same as e4_enum_image for a virtual device; @name ends up in e4_part.device. */
+E4_API int e4_enum_cb(e4_read_cb read, void *read_ctx, uint64_t size,
+		      const wchar_t *name, e4_part_cb cb, void *ctx);
 
 /* ---- raw access (hashing, imaging, writing images) ---- */
 typedef struct e4_raw e4_raw;

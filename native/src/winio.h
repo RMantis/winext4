@@ -8,8 +8,13 @@
 #include <stdint.h>
 #include "ext2fs/ext2fs.h"
 
+/* Read callback for virtual devices (images inside archives): 0 = ok. */
+typedef int (__cdecl *w4_read_fn)(void *ctx, uint64_t pos, void *buf, uint32_t len);
+
 typedef struct w4_dev {
-	HANDLE h;
+	HANDLE h;          /* INVALID_HANDLE_VALUE for callback devices */
+	w4_read_fn read_cb;
+	void *read_ctx;
 	uint64_t offset;   /* start of the filesystem inside the handle */
 	uint64_t length;   /* bytes available from offset */
 	uint32_t align;    /* I/O alignment: 1 for files, sector size for devices */
@@ -26,6 +31,19 @@ typedef struct w4_dev {
 int w4_dev_open(const wchar_t *path, uint64_t offset, uint64_t length,
 		int flags, w4_dev **out);
 void w4_dev_close(w4_dev *dev);
+
+/* Read-only device served by @cb; @size is the whole virtual device. */
+int w4_dev_open_cb(w4_read_fn cb, void *ctx, uint64_t size, uint64_t offset,
+		   uint64_t length, w4_dev **out);
+
+/* Something to read partition tables / superblocks from. */
+typedef struct w4_reader {
+	HANDLE h;	/* used when dev is NULL */
+	uint32_t align;
+	w4_dev *dev;
+} w4_reader;
+
+int w4_read(const w4_reader *r, uint64_t pos, void *buf, uint32_t len);
 
 /* Positional I/O relative to dev->offset; handles sector alignment. */
 errcode_t w4_dev_pread(w4_dev *dev, uint64_t pos, void *buf, size_t len);

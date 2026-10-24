@@ -339,8 +339,40 @@ static void compute_blockers(e4_fs *f, uint32_t flags)
 		append(b, n, "journal needs recovery;");
 }
 
+static int open_on(w4_dev *dev, uint32_t flags, e4_fs **out);
+
 E4_API int e4_open(const wchar_t *path, uint64_t offset, uint64_t length,
 		   uint32_t flags, e4_fs **out)
+{
+	w4_dev *dev;
+	int ret;
+
+	InitOnceExecuteOnce(&et_once, init_et, NULL, NULL);
+	if (!path || !out)
+		return EINVAL;
+	*out = NULL;
+	ret = w4_dev_open(path, offset, length, (flags & E4_OPEN_RW) ? W4_DEV_WRITE : 0, &dev);
+	return ret ? ret : open_on(dev, flags, out);
+}
+
+E4_API int e4_open_cb(e4_read_cb read, void *read_ctx, uint64_t size,
+		      uint64_t offset, uint64_t length, uint32_t flags, e4_fs **out)
+{
+	w4_dev *dev;
+	int ret;
+
+	InitOnceExecuteOnce(&et_once, init_et, NULL, NULL);
+	if (!out)
+		return EINVAL;
+	*out = NULL;
+	if (flags & E4_OPEN_RW)
+		return EROFS;
+	ret = w4_dev_open_cb(read, read_ctx, size, offset, length, &dev);
+	return ret ? ret : open_on(dev, flags, out);
+}
+
+/* Takes ownership of @dev. */
+static int open_on(w4_dev *dev, uint32_t flags, e4_fs **out)
 {
 	e4_fs *f;
 	char name[64];
@@ -350,20 +382,14 @@ E4_API int e4_open(const wchar_t *path, uint64_t offset, uint64_t length,
 	struct ext2_super_block *sb;
 	uint32_t seed = 0;
 
-	InitOnceExecuteOnce(&et_once, init_et, NULL, NULL);
-	if (!path || !out)
-		return EINVAL;
-	*out = NULL;
-
 	f = calloc(1, sizeof(*f));
-	if (!f)
+	if (!f) {
+		w4_dev_close(dev);
 		return ENOMEM;
+	}
 	InitializeCriticalSection(&f->cs);
 	f->rw = rw;
-
-	ret = w4_dev_open(path, offset, length, rw ? W4_DEV_WRITE : 0, &f->dev);
-	if (ret)
-		goto fail;
+	f->dev = dev;
 
 	w4_dev_name(f->dev, name, sizeof(name));
 	oflags = EXT2_FLAG_64BITS | EXT2_FLAG_THREADS;

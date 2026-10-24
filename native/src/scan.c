@@ -36,14 +36,14 @@ static uint64_t le64(const unsigned char *p)
 }
 
 /* Reads the superblock at @offset; fills the ext fields of @part. */
-static void probe(HANDLE h, uint64_t offset, uint32_t align, e4_part *part)
+static void probe(const w4_reader *r, uint64_t offset, e4_part *part)
 {
 	unsigned char buf[4096];
 	const unsigned char *sb = buf + SB_OFFSET;
 	uint32_t compat, incompat;
 
 	part->is_ext = 0;
-	if (w4_read_at(h, offset, buf, sizeof(buf), align))
+	if (w4_read(r, offset, buf, sizeof(buf)))
 		return;
 	if (le16(sb + SB_MAGIC_OFF) != 0xEF53)
 		return;
@@ -171,7 +171,9 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 			if (layout->PartitionStyle == PARTITION_STYLE_GPT) {
 				base.part_style = 2;
 				pt_format_guid((const unsigned char *) &layout->Gpt.DiskId, base.disk_id);
-				base.gpt_status = pt_verify_gpt(h, align, base.disk_size, align);
+				w4_reader drd = { h, align, NULL };
+
+				base.gpt_status = pt_verify_gpt(&drd, align, base.disk_size);
 			} else if (layout->PartitionStyle == PARTITION_STYLE_MBR) {
 				base.part_style = 1;
 				sprintf(base.disk_id, "%08X", (unsigned) layout->Mbr.Signature);
@@ -209,8 +211,9 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 				} else if (pi->PartitionStyle == PARTITION_STYLE_MBR) {
 					part.mbr_type = pi->Mbr.PartitionType;
 				}
-				probe(h, (uint64_t) pi->StartingOffset.QuadPart,
-				      align, &part);
+				w4_reader prd = { h, align, NULL };
+
+				probe(&prd, (uint64_t) pi->StartingOffset.QuadPart, &part);
 				found = 1;
 				if (cb(ctx, &part)) {
 					free(layout);
@@ -228,7 +231,9 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 			wcscpy(part.device, path);
 			part.offset = 0;
 			part.length = base.disk_size;
-			probe(h, 0, align, &part);
+			w4_reader brd = { h, align, NULL };
+
+			probe(&brd, 0, &part);
 			if (part.is_ext && cb(ctx, &part)) {
 				CloseHandle(h);
 				return 0;
@@ -246,7 +251,7 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx)
 /* ------------------------------------------------------------------ */
 
 struct img_ctx {
-	HANDLE h;
+	w4_reader rd;
 	e4_part table;	/* table-wide fields copied into every partition */
 	const wchar_t *path;
 	uint64_t size;
@@ -281,7 +286,7 @@ static void emit(struct img_ctx *ic, int number, uint64_t offset,
 	part.partition_number = number;
 	part.bus_type = -1;
 	part.disk_size = ic->size;
-	probe(ic->h, offset, 1, &part);
+	probe(&ic->rd, offset, &part);
 	ic->count++;
 	if (ic->cb(ic->ctx, &part))
 		ic->stop = 1;
@@ -294,13 +299,13 @@ static int scan_gpt(struct img_ctx *ic, uint32_t ssz)
 	uint32_t count, esz, i;
 	static const unsigned char zero[16];
 
-	if (w4_read_at(ic->h, ssz, hdr, sizeof(hdr), 1) ||
+	if (w4_read(&ic->rd, ssz, hdr, sizeof(hdr)) ||
 	    memcmp(hdr, "EFI PART", 8))
 		return 0;
 	ic->table.part_style = 2;
 	ic->table.sector_size = ssz;
 	pt_format_guid(hdr + 56, ic->table.disk_id);
-	ic->table.gpt_status = pt_verify_gpt(ic->h, ssz, ic->size, 1);
+	ic->table.gpt_status = pt_verify_gpt(&ic->rd, ssz, ic->size);
 	table_lba = le64(hdr + 72);
 	count = le32(hdr + 80);
 	esz = le32(hdr + 84);
@@ -309,8 +314,7 @@ static int scan_gpt(struct img_ctx *ic, uint32_t ssz)
 	for (i = 0; i < count && !ic->stop; i++) {
 		uint64_t first, last;
 
-		if (w4_read_at(ic->h, table_lba * ssz + (uint64_t) i * esz, ent,
-			       esz, 1))
+		if (w4_read(&ic->rd, table_lba * ssz + (uint64_t) i * esz, ent, esz))
 			break;
 		if (!memcmp(ent, zero, 16))
 			continue;
@@ -347,7 +351,7 @@ static void scan_mbr(struct img_ctx *ic, const unsigned char *mbr)
 			while (!ic->stop && guard++ < 128) {
 				const unsigned char *l, *next;
 
-				if (w4_read_at(ic->h, ebr * 512, sec, 512, 1) ||
+				if (w4_read(&ic->rd, ebr * 512, sec, 512) ||
 				    sec[510] != 0x55 || sec[511] != 0xAA)
 					break;
 				l = sec + 446;
@@ -364,39 +368,31 @@ static void scan_mbr(struct img_ctx *ic, const unsigned char *mbr)
 	}
 }
 
-E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx)
+/* Partition/filesystem scan of an image seen through @rd (file or callback). */
+static int enum_reader(const w4_reader *rd, uint64_t size, const wchar_t *name,
+		       e4_part_cb cb, void *ctx)
 {
 	struct img_ctx ic;
-	LARGE_INTEGER sz;
 	unsigned char sec[512];
 	e4_part whole;
 	int i, has_gpt_marker = 0;
 
 	memset(&ic, 0, sizeof(ic));
-	ic.h = CreateFileW(path, GENERIC_READ,
-			   FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-			   OPEN_EXISTING, 0, NULL);
-	if (ic.h == INVALID_HANDLE_VALUE)
-		return GetLastError() == ERROR_ACCESS_DENIED ? EACCES : ENOENT;
-	if (!GetFileSizeEx(ic.h, &sz)) {
-		CloseHandle(ic.h);
-		return EIO;
-	}
-	ic.size = (uint64_t) sz.QuadPart;
-	ic.path = path;
+	ic.rd = *rd;
+	ic.size = size;
+	ic.path = name;
 	ic.cb = cb;
 	ic.ctx = ctx;
 
 	/* A bare filesystem image (e.g. made with mkfs.ext4 file.img)? */
 	memset(&whole, 0, sizeof(whole));
-	probe(ic.h, 0, 1, &whole);
+	probe(&ic.rd, 0, &whole);
 	if (whole.is_ext) {
 		emit(&ic, 0, 0, ic.size, NULL, 0);
-		CloseHandle(ic.h);
 		return 0;
 	}
 
-	if (!w4_read_at(ic.h, 0, sec, sizeof(sec), 1) &&
+	if (!w4_read(&ic.rd, 0, sec, sizeof(sec)) &&
 	    sec[510] == 0x55 && sec[511] == 0xAA) {
 		for (i = 0; i < 4; i++)
 			if (sec[446 + i * 16 + 4] == 0xEE)
@@ -409,6 +405,37 @@ E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx)
 			scan_mbr(&ic, sec);
 		}
 	}
-	CloseHandle(ic.h);
 	return ic.count || whole.is_ext ? 0 : E4_ENOTEXT;
+}
+
+E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx)
+{
+	LARGE_INTEGER sz;
+	w4_reader rd = { INVALID_HANDLE_VALUE, 1, NULL };
+	int ret;
+
+	rd.h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+			   NULL, OPEN_EXISTING, 0, NULL);
+	if (rd.h == INVALID_HANDLE_VALUE)
+		return GetLastError() == ERROR_ACCESS_DENIED ? EACCES : ENOENT;
+	if (!GetFileSizeEx(rd.h, &sz)) {
+		CloseHandle(rd.h);
+		return EIO;
+	}
+	ret = enum_reader(&rd, (uint64_t) sz.QuadPart, path, cb, ctx);
+	CloseHandle(rd.h);
+	return ret;
+}
+
+E4_API int e4_enum_cb(e4_read_cb read, void *read_ctx, uint64_t size,
+		      const wchar_t *name, e4_part_cb cb, void *ctx)
+{
+	w4_reader rd = { INVALID_HANDLE_VALUE, 1, NULL };
+	int ret = w4_dev_open_cb(read, read_ctx, size, 0, 0, &rd.dev);
+
+	if (ret)
+		return ret;
+	ret = enum_reader(&rd, size, name, cb, ctx);
+	w4_dev_close(rd.dev);
+	return ret;
 }

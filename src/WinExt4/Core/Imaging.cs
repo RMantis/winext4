@@ -7,7 +7,7 @@ using WinExt4.Native;
 namespace WinExt4.Core;
 
 /// <summary>Byte-level access to a disk, a partition or an image file.</summary>
-public sealed unsafe class RawDevice : IDisposable
+public sealed unsafe class RawDevice : IByteSource
 {
     private IntPtr _h;
 
@@ -71,15 +71,48 @@ public sealed record HashResult(string Md5, string Sha256, ulong Bytes);
 /// <summary>A byte range to hash, export or overwrite: a partition, a whole disk or an image.</summary>
 public sealed record RawTarget(string Path, ulong Offset, ulong Length, string Description, int DiskNumber = -1)
 {
+    /// <summary>Set for partitions/images inside archives (read-only).</summary>
+    public Archives.IRandomAccess? Virtual { get; init; }
+
     public static RawTarget Partition(Ext4Source s) =>
         new(s.Device, s.Offset, s.Length,
-            s.IsImage ? $"{System.IO.Path.GetFileName(s.ImagePath)}, partizione {s.PartitionNumber}" : $"Disco {s.DiskNumber}, partizione {s.PartitionNumber}",
-            s.IsImage ? -1 : s.DiskNumber);
+            s.IsInArchive ? $"{System.IO.Path.GetFileName(s.ImagePath)} › {s.ArchiveMember}, partizione {s.PartitionNumber}"
+            : s.IsImage ? $"{System.IO.Path.GetFileName(s.ImagePath)}, partizione {s.PartitionNumber}" : $"Disco {s.DiskNumber}, partizione {s.PartitionNumber}",
+            s.IsImage ? -1 : s.DiskNumber) { Virtual = s.Virtual };
 
     public static RawTarget WholeDisk(Ext4Source s) =>
         new(s.Container, 0, s.IsImage ? 0 : s.DiskSize,
-            s.IsImage ? System.IO.Path.GetFileName(s.ImagePath)! : $"Disco {s.DiskNumber} ({s.Model})",
-            s.IsImage ? -1 : s.DiskNumber);
+            s.IsInArchive ? $"{System.IO.Path.GetFileName(s.ImagePath)} › {s.ArchiveMember}"
+            : s.IsImage ? System.IO.Path.GetFileName(s.ImagePath)! : $"Disco {s.DiskNumber} ({s.Model})",
+            s.IsImage ? -1 : s.DiskNumber) { Virtual = s.Virtual };
+}
+
+/// <summary>Something that can be read by offset: a real device/file or an archive member.</summary>
+public interface IByteSource : IDisposable
+{
+    ulong Size { get; }
+    void Read(ulong pos, Span<byte> buf);
+}
+
+internal sealed class VirtualSource : IByteSource
+{
+    private readonly Archives.IRandomAccess _a;
+    private readonly ulong _offset;
+
+    public ulong Size { get; }
+
+    public VirtualSource(Archives.IRandomAccess a, ulong offset, ulong length)
+    {
+        _a = a;
+        _offset = offset;
+        Size = length == 0 ? (ulong)a.Length - offset : Math.Min(length, (ulong)a.Length - offset);
+    }
+
+    public void Read(ulong pos, Span<byte> buf) => _a.Read((long)(_offset + pos), buf);
+
+    public void Dispose()
+    {
+    }
 }
 
 /// <summary>Hashing, disk/partition → image export and image → disk writing.</summary>
@@ -96,11 +129,14 @@ public static class Imaging
     /// <summary>MD5 and SHA-256 of a range, in one pass.</summary>
     public static HashResult Hash(RawTarget t, IProgress<JobProgress>? progress, CancellationToken cancel)
     {
-        using var dev = RawDevice.Open(t.Path, t.Offset, t.Length, false);
+        using var dev = OpenSource(t);
         return HashDevice(dev, dev.Size, "Calcolo hash", progress, cancel);
     }
 
-    private static HashResult HashDevice(RawDevice dev, ulong size, string phase, IProgress<JobProgress>? progress, CancellationToken cancel)
+    private static IByteSource OpenSource(RawTarget t) =>
+        t.Virtual is { } v ? new VirtualSource(v, t.Offset, t.Length) : RawDevice.Open(t.Path, t.Offset, t.Length, false);
+
+    private static HashResult HashDevice(IByteSource dev, ulong size, string phase, IProgress<JobProgress>? progress, CancellationToken cancel)
     {
         using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -144,7 +180,7 @@ public static class Imaging
     {
         HashResult raw;
         string? fileMd5 = null, fileSha = null;
-        using (var dev = RawDevice.Open(t.Path, t.Offset, t.Length, false))
+        using (var dev = OpenSource(t))
         using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 16))
         {
             using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
@@ -341,7 +377,7 @@ public static class Imaging
 
     private static bool IsZero(ReadOnlySpan<byte> s) => s.IndexOfAnyExcept((byte)0) < 0;
 
-    private static void MakeSparse(FileStream fs)
+    public static void MakeSparse(FileStream fs)
     {
         const uint FSCTL_SET_SPARSE = 0x000900C4;
         DeviceIoControl(fs.SafeFileHandle, FSCTL_SET_SPARSE, IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero);

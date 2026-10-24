@@ -121,7 +121,31 @@ internal static unsafe class Ext4Native
     public static extern int e4_open(string path, ulong offset, ulong length, uint flags, out IntPtr fs);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_open_cb(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, uint, int> read, IntPtr ctx,
+        ulong size, ulong offset, ulong length, uint flags, out IntPtr fs);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_enum_cb(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, uint, int> read, IntPtr readCtx,
+        ulong size, string name, delegate* unmanaged[Cdecl]<IntPtr, Part*, int> cb, IntPtr ctx);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     public static extern int e4_close(IntPtr fs);
+
+    /// <summary>Read callback handed to ext4core for virtual devices: ctx is a GCHandle to an IRandomAccess.</summary>
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+    public static int VirtualRead(IntPtr ctx, ulong pos, byte* buf, uint len)
+    {
+        try
+        {
+            var a = (Core.Archives.IRandomAccess)GCHandle.FromIntPtr(ctx).Target!;
+            a.Read((long)pos, new Span<byte>(buf, (int)len));
+            return 0;
+        }
+        catch (Exception)
+        {
+            return 1;
+        }
+    }
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     public static extern int e4_get_info(IntPtr fs, out Info info);

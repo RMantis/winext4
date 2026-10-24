@@ -22,6 +22,11 @@ public sealed record Ext4Source
     public ulong DiskSize { get; init; }
     public string? ImagePath { get; init; }
 
+    /// <summary>For images inside archives: the decompressed member, read through ext4core callbacks.</summary>
+    public Archives.IRandomAccess? Virtual { get; init; }
+    public string? ArchiveMember { get; init; }
+    public bool IsInArchive => Virtual is not null;
+
     /// <summary>\.\PhysicalDriveN or the image file: what partition edits operate on.</summary>
     public string Container { get; init; } = "";
     public PartitionStyle PartitionStyle { get; init; }
@@ -64,7 +69,9 @@ public sealed record Ext4Source
     {
         get
         {
-            string where = IsImage
+            string where = IsInArchive
+                ? $"{ArchiveMember}" + (PartitionNumber > 0 ? $" · partizione {PartitionNumber}" : "")
+                : IsImage
                 ? $"{System.IO.Path.GetFileName(ImagePath)}" + (PartitionNumber > 0 ? $" · partizione {PartitionNumber}" : "")
                 : $"Disco {DiskNumber}" + (PartitionNumber > 0 ? $" · partizione {PartitionNumber}" : "");
             return $"{where} · {Format.Size(Length)} · {KindText}";
@@ -75,6 +82,7 @@ public sealed record Ext4Source
     {
         get
         {
+            if (IsInArchive) return $"Archivio: {System.IO.Path.GetFileName(ImagePath)}";
             if (IsImage) return $"Immagine: {System.IO.Path.GetFileName(ImagePath)}";
             string bus = IsUsb ? "USB" : IsSd ? "SD" : Removable ? "Rimovibile" : "Interno";
             string model = Model.Length > 0 ? Model : $"Disco {DiskNumber}";
@@ -82,7 +90,7 @@ public sealed record Ext4Source
         }
     }
 
-    public string Icon => IsImage ? "" : IsUsb ? "" : IsSd ? "" : "";
+    public string Icon => IsInArchive ? "" : IsImage ? "" : IsUsb ? "" : IsSd ? "" : "";
 }
 
 public static unsafe class SourceScanner
@@ -91,6 +99,8 @@ public static unsafe class SourceScanner
     {
         public readonly List<Ext4Source> Items = new();
         public string? ImagePath;
+        public Archives.IRandomAccess? Virtual;
+        public string? Member;
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -113,6 +123,8 @@ public static unsafe class SourceScanner
             Model = Ext4Native.Utf8(p->model, 128),
             DiskSize = p->disk_size,
             ImagePath = c.ImagePath,
+            Virtual = c.Virtual,
+            ArchiveMember = c.Member,
             Container = Ext4Native.Wide(p->container, 96),
             PartitionStyle = (PartitionStyle)p->part_style,
             MbrType = p->mbr_type,
@@ -139,6 +151,26 @@ public static unsafe class SourceScanner
         finally
         {
             h.Free();
+        }
+        return c.Items;
+    }
+
+    /// <summary>Filesystems inside a member of an archive (read through its random access).</summary>
+    public static List<Ext4Source> ScanVirtual(Archives.IRandomAccess access, string archivePath, string member)
+    {
+        var c = new Collector { ImagePath = archivePath, Virtual = access, Member = member };
+        var h = GCHandle.Alloc(c);
+        var ah = GCHandle.Alloc(access);
+        try
+        {
+            int err = Ext4Native.e4_enum_cb(&Ext4Native.VirtualRead, GCHandle.ToIntPtr(ah), (ulong)access.Length,
+                $"{archivePath}|{member}", &OnPart, GCHandle.ToIntPtr(h));
+            if (err != 0 && err != Errno.ENOTEXT) Ext4Exception.Check(err, "Analisi immagine nell'archivio");
+        }
+        finally
+        {
+            h.Free();
+            ah.Free();
         }
         return c.Items;
     }

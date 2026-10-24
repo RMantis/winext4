@@ -14,6 +14,7 @@ public sealed unsafe class Ext4Volume : IDisposable
     public const uint RootIno = 2;
 
     private IntPtr _fs;
+    private GCHandle _virtual; // keeps the archive access alive for the native read callback
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public Ext4Source Source { get; }
@@ -28,6 +29,20 @@ public sealed unsafe class Ext4Volume : IDisposable
 
     public static Ext4Volume Open(Ext4Source source, bool readWrite)
     {
+        if (source.Virtual is { } access)
+        {
+            if (readWrite)
+                throw new Ext4Exception(Errno.EROFS, "Le immagini dentro un archivio si aprono in sola lettura");
+            var h = GCHandle.Alloc(access);
+            int e = Ext4Native.e4_open_cb(&Ext4Native.VirtualRead, GCHandle.ToIntPtr(h), (ulong)access.Length,
+                source.Offset, source.Length, 0, out IntPtr vfs);
+            if (e != 0)
+            {
+                h.Free();
+                Ext4Exception.Check(e, "Apertura");
+            }
+            return new Ext4Volume(vfs, source, false) { _virtual = h };
+        }
         int err = Ext4Native.e4_open(source.Device, source.Offset, source.Length,
             readWrite ? Ext4Native.OpenRw : 0, out IntPtr fs);
         Ext4Exception.Check(err, readWrite ? "Apertura in scrittura" : "Apertura");
@@ -41,8 +56,15 @@ public sealed unsafe class Ext4Volume : IDisposable
     public void Dispose()
     {
         IntPtr fs = Interlocked.Exchange(ref _fs, IntPtr.Zero);
-        if (fs != IntPtr.Zero)
+        if (fs == IntPtr.Zero) return;
+        try
+        {
             Ext4Exception.Check(Ext4Native.e4_close(fs), "Chiusura");
+        }
+        finally
+        {
+            if (_virtual.IsAllocated) _virtual.Free();
+        }
     }
 
     // ------------------------------------------------------------------

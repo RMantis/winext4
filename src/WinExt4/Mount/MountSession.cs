@@ -46,8 +46,9 @@ public sealed class MountSession : IDisposable
             throw new InvalidOperationException(
                 "WinFsp non è installato. Scaricalo da https://winfsp.dev (driver firmato) e riprova.");
 
-        letter ??= FreeDriveLetters().FirstOrDefault()
-                   ?? throw new InvalidOperationException("Nessuna lettera di unità libera.");
+        if (string.IsNullOrEmpty(letter))
+            letter = FreeDriveLetters().FirstOrDefault()
+                     ?? throw new InvalidOperationException("Nessuna lettera di unità libera.");
 
         var fs = new Ext4FileSystem(volume, settings);
         var host = new FileSystemHost(fs);

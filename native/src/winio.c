@@ -191,7 +191,7 @@ void w4_dev_close(w4_dev *dev)
 
 	if (!dev)
 		return;
-	if (dev->h != INVALID_HANDLE_VALUE) {
+	if (dev->h != INVALID_HANDLE_VALUE && dev->h) {
 		if (dev->writable)
 			FlushFileBuffers(dev->h);
 		if (dev->locked)
@@ -208,6 +208,13 @@ static errcode_t raw_io(w4_dev *dev, uint64_t abspos, void *buf, DWORD len,
 	OVERLAPPED ov;
 	DWORD done = 0;
 	BOOL ok;
+
+	if (dev->read_cb) {
+		if (write)
+			return EXT2_ET_RO_FILSYS;
+		return dev->read_cb(dev->read_ctx, abspos, buf, len) ?
+			EXT2_ET_SHORT_READ : 0;
+	}
 
 	memset(&ov, 0, sizeof(ov));
 	ov.Offset = (DWORD) abspos;
@@ -297,6 +304,34 @@ static errcode_t dev_io(w4_dev *dev, uint64_t pos, void *buf, size_t len,
 	}
 	_aligned_free(bounce);
 	return err;
+}
+
+int w4_dev_open_cb(w4_read_fn cb, void *ctx, uint64_t size, uint64_t offset,
+		   uint64_t length, w4_dev **out)
+{
+	w4_dev *dev;
+
+	*out = NULL;
+	if (!cb || offset > size)
+		return EINVAL;
+	dev = calloc(1, sizeof(*dev));
+	if (!dev)
+		return ENOMEM;
+	dev->h = INVALID_HANDLE_VALUE;
+	dev->read_cb = cb;
+	dev->read_ctx = ctx;
+	dev->align = 1;
+	dev->offset = offset;
+	dev->length = length == 0 || length > size - offset ? size - offset : length;
+	*out = dev;
+	return 0;
+}
+
+int w4_read(const w4_reader *r, uint64_t pos, void *buf, uint32_t len)
+{
+	if (r->dev)
+		return w4_dev_pread(r->dev, pos, buf, len) ? -1 : 0;
+	return w4_read_at(r->h, pos, buf, len, r->align);
 }
 
 errcode_t w4_dev_pread(w4_dev *dev, uint64_t pos, void *buf, size_t len)

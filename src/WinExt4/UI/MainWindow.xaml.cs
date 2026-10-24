@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _knownKeys = new();
     private readonly DispatcherTimer _rescanTimer;
     private readonly TempCopies _temp = new();
+    private readonly Dictionary<string, Core.Archives.ArchiveContents> _archives = new(StringComparer.OrdinalIgnoreCase);
     private bool _writeBackAlways;
     private bool _askingWriteBack;
     private readonly PreviewView _preview = new();
@@ -162,7 +163,7 @@ public partial class MainWindow : Window
 
     private static bool IsImageFile(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".img" or ".raw" or ".bin" or ".dd" or ".ext4" or ".ext3"
-            or ".ext2" or ".iso";
+            or ".ext2" or ".iso" or ".gz" or ".tgz" or ".xz" or ".zst" or ".zip" or ".tar";
 
     // ==================================================================
     // sources
@@ -337,21 +338,32 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog
         {
             Title = "Apri immagine disco",
-            Filter = "Immagini disco (*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2)|*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2|Tutti i file (*.*)|*.*",
+            Filter = "Immagini e archivi (*.img;*.raw;*.bin;*.dd;*.ext*;*.gz;*.tgz;*.xz;*.zst;*.zip;*.tar)|*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2;*.gz;*.tgz;*.xz;*.zst;*.zip;*.tar|Tutti i file (*.*)|*.*",
             Multiselect = true,
         };
         if (dlg.ShowDialog(this) == true)
             foreach (var f in dlg.FileNames) OpenImage(f);
     }
 
-    public void OpenImage(string path)
+    public void OpenImage(string path) => _ = OpenImageAsync(path);
+
+    private async Task OpenImageAsync(string path)
     {
         List<Ext4Source> found;
         try
         {
-            found = SourceScanner.ScanImage(path);
+            if (Core.Archives.ArchiveOpener.IsArchive(path))
+            {
+                var r = await OpenArchiveAsync(path);
+                if (r is null) return;
+                found = r;
+            }
+            else
+            {
+                found = SourceScanner.ScanImage(path);
+            }
         }
-        catch (Ext4Exception ex)
+        catch (Exception ex) when (ex is Ext4Exception or IOException or InvalidDataException)
         {
             MessageBox.Show(this, $"{Path.GetFileName(path)}\n\n{ex.Message}", "Apri immagine",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -372,6 +384,46 @@ public partial class MainWindow : Window
             return;
         }
         SelectAndOpen(first);
+    }
+
+    /// <summary>Indexes an archive (once; the index is cached) and scans every image inside it.</summary>
+    private async Task<List<Ext4Source>?> OpenArchiveAsync(string path)
+    {
+        // a volume from the previous opening of this archive must be closed first
+        if (_current?.Source.IsInArchive == true && string.Equals(_current.Source.ImagePath, path, StringComparison.OrdinalIgnoreCase))
+            await CloseVolumeAsync();
+        if (_archives.Remove(path, out var old)) old.Dispose();
+
+        var (ok, result) = await RunJobAsync($"Apertura di {Path.GetFileName(path)}", (p, ct) =>
+        {
+            var contents = Core.Archives.ArchiveOpener.Open(path, p, ct);
+            var sources = new List<Ext4Source>();
+            try
+            {
+                foreach (var m in contents.Members)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    p.Report(new JobProgress { Phase = $"analisi di {m.Name}", Done = 0, Total = 0 });
+                    sources.AddRange(SourceScanner.ScanVirtual(m.Access, path, m.Name));
+                }
+            }
+            catch
+            {
+                contents.Dispose();
+                throw;
+            }
+            return (contents, sources);
+        });
+        if (!ok) return null;
+        var (archive, list) = result;
+        _archives[path] = archive;
+        string note = $"{Path.GetFileName(path)}: archivio {archive.Kind}, {archive.Members.Count} file immagine";
+        if (archive.Skipped.Count > 0) note += $" ({archive.Skipped.Count} non supportati)";
+        SetStatus(note + ". Le immagini negli archivi si aprono in sola lettura.");
+        if (list.Count == 0)
+            MessageBox.Show(this, $"Nell'archivio non ci sono immagini con filesystem ext2/3/4.\n\n{string.Join("\n", archive.Skipped)}",
+                "Apri archivio", MessageBoxButton.OK, MessageBoxImage.Information);
+        return list;
     }
 
     // ==================================================================
@@ -1494,7 +1546,10 @@ public partial class MainWindow : Window
         bool busy = _operation is not null;
         int sel = FileList.SelectedItems.Count;
 
-        BtnReadWrite.IsEnabled = open && !busy;
+        BtnReadWrite.IsEnabled = open && !busy && _current?.Source.IsInArchive != true;
+        BtnReadWrite.ToolTip = _current?.Source.IsInArchive == true
+            ? "Le immagini dentro un archivio sono in sola lettura: estraile o esportale per modificarle"
+            : null;
         RwIcon.Text = rw ? "" : "";
         RwText.Text = rw ? " Torna in sola lettura" : " Sblocca scrittura";
         BtnMount.IsEnabled = open && !busy;

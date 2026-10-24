@@ -17,6 +17,7 @@ int pt_parse_guid(const char *s, unsigned char *g /* 16 bytes */);
 void pt_name_to_utf8(const unsigned char *utf16le, char *out, int out_size);
 
 /* E4_GPT_* flags for the GPT on @h (sector size @ssz, total size @size). */
-uint32_t pt_verify_gpt(HANDLE h, uint32_t ssz, uint64_t size, uint32_t align);
+#include "winio.h"
+uint32_t pt_verify_gpt(const w4_reader *r, uint32_t ssz, uint64_t size);
 
 #endif

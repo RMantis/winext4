@@ -64,6 +64,16 @@ Per ogni partizione WinExt4 legge tipo (GUID GPT o tipo MBR), PARTUUID, nome e a
 
 I dettagli sono anche nel pulsante ⓘ (informazioni sul filesystem).
 
+### Immagini dentro archivi
+
+«Apri immagine» (o il trascinamento) accetta anche archivi: **.tar**, **.tar.gz/.tgz**, **.img.gz** (anche multi-membro), **.img.xz/.tar.xz**, **.img.zst/.tar.zst** e **.zip** (membri memorizzati o deflate, anche zip64). Le immagini dentro l'archivio compaiono nell'elenco come le altre e si sfogliano, si estraggono, si montano (in sola lettura), se ne calcola l'hash o si esportano, **senza estrarle prima**:
+- tar e zip memorizzati si leggono direttamente;
+- gzip e zip deflate: al primo uso l'archivio viene letto una volta per costruire un indice di punti di ripresa ogni ~4 MB (come `zran` di zlib), salvato in `%LOCALAPPDATA%\WinExt4\index`: le aperture successive sono immediate;
+- xz multi-blocco (`xz -T0`, o creato da WinExt4) e zstd a più frame si leggono un blocco alla volta;
+- xz e zstd a blocco unico vengono decompressi una volta in una cache sparsa (`%LOCALAPPDATA%\WinExt4\cache`, ripulita dopo 14 giorni di inutilizzo).
+
+Le immagini negli archivi sono in sola lettura.
+
 ### Avvio con Windows
 
 In *Impostazioni → Avvia con Windows* viene creata un'attività pianificata con privilegi elevati: nessun prompt UAC a ogni accesso. WinExt4 resta nell'area di notifica e si apre da solo quando colleghi un disco ext. Chiudere la finestra la nasconde soltanto; per uscire usa il clic destro sull'icona → Esci.
@@ -147,7 +157,6 @@ third_party/       e2fsprogs (sottomodulo)
 ## Roadmap
 
 Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
-- apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
 - fsck integrato;
 - modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.
 

@@ -61,7 +61,7 @@ public static class ImageFormats
 
     private static bool _xzReady;
 
-    private static void EnsureXz()
+    internal static void EnsureXz()
     {
         if (_xzReady) return;
         // next to WinExt4.dll (also when hosted by tests), or in the NuGet runtimes folder
@@ -95,6 +95,20 @@ public static class ImageFormats
         EnsureXz();
         return new XZStream(output, new XZCompressOptions { Level = LzmaCompLevel.Level6, LeaveOpen = true },
             new XZParallelCompressOptions { Threads = Math.Max(1, Environment.ProcessorCount - 1), BlockSize = 32UL << 20 });
+    }
+
+    /// <summary>Decompressing stream over <paramref name="compressed"/> (gzip, zstd or xz), closing it when disposed.</summary>
+    public static Stream Decompressor(Stream compressed, ImageFormat format)
+    {
+        switch (format)
+        {
+            case ImageFormat.Gzip: return new GZipStream(compressed, CompressionMode.Decompress);
+            case ImageFormat.Zstd: return new DecompressionStream(compressed, leaveOpen: false);
+            case ImageFormat.Xz:
+                EnsureXz();
+                return new XZStream(compressed, new XZDecompressOptions { LeaveOpen = false });
+            default: throw new ArgumentOutOfRangeException(nameof(format));
+        }
     }
 
     /// <summary>

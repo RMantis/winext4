@@ -257,7 +257,8 @@ public sealed class PartitionPropertiesDialog : Window
         p.Children.Add(Note("Si modifica solo la tabella delle partizioni, non i dati. " +
                             (s.IsImage ? "Le due copie della GPT e i CRC vengono riscritti." : "Su un disco Windows aggiorna entrambe le copie della GPT. Serve l'amministratore.") +
                             " Il volume verrà chiuso e riaperto."));
-        var apply = new Button { Content = "Applica alla partizione", Padding = new Thickness(12, 4, 12, 4), HorizontalAlignment = HorizontalAlignment.Left };
+        var apply = new Button { Content = "Applica alla partizione", Padding = new Thickness(12, 4, 12, 4), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = !s.IsInArchive };
+        if (s.IsInArchive) p.Children.Add(Note("L'immagine è dentro un archivio: la tabella delle partizioni non si può modificare."));
         apply.Click += (_, _) =>
         {
             string? gptType = null, gptName = null;

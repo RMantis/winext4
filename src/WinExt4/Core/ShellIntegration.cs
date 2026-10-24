@@ -12,7 +12,7 @@ public static class ShellIntegration
 {
     public static readonly string[] Extensions =
     {
-        ".img", ".raw", ".bin", ".dd", ".ext2", ".ext3", ".ext4",
+        ".img", ".raw", ".bin", ".dd", ".ext2", ".ext3", ".ext4", ".gz", ".tgz", ".xz", ".zst", ".zip", ".tar",
     };
 
     private const string ProgId = "WinExt4.DiskImage";
