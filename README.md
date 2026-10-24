@@ -31,6 +31,26 @@ WinFsp serve solo per il pulsante «Monta su Windows». Tutto il resto funziona 
 5. **Monta su Windows** assegna una lettera di unità e il disco si usa da Esplora risorse e da qualsiasi programma. Prima del montaggio una finestra spiega come vengono trattati permessi e attributi e chiede proprietario e permessi da dare ai nuovi file.
 6. **Chiudi** (oppure torna in sola lettura) **prima di scollegare** un disco aperto in scrittura.
 
+### Controllo e riparazione (fsck)
+
+**Controlla e ripara (fsck)…** nel menu contestuale di una partizione (o **Controlla…** nell'avviso giallo, che compare quando il filesystem è segnato con errori, non è stato smontato bene, ha superato il numero di montaggi o l'intervallo tra i controlli) esegue **e2fsck 1.47.4**, lo stesso di Linux, compilato per Windows sopra l'I/O di WinExt4 (`e4fsck.exe`, accanto a `WinExt4.exe`). Le modalità sono:
+- **Solo controllo** (`-n`): non scrive niente;
+- **Ripara in una bozza** (`-y` in una bozza): la sorgente non viene toccata; alla fine **Apri la bozza** mostra il risultato, **Modifiche…** cosa è cambiato (file recuperati in `lost+found`, voci rimosse…) e **Applica…** lo scrive davvero. È un «fsck con anteprima»;
+- **Ripara automaticamente** (`-p`): solo le correzioni che e2fsck considera sicure, come all'avvio di Linux;
+- **Ripara tutto** (`-y`) direttamente sulla sorgente, dopo una conferma; non si può interrompere.
+
+L'output di e2fsck compare dal vivo nella finestra, con l'avanzamento dei cinque passi. Per i dischi la partizione viene bloccata come per la scrittura. Le immagini dentro un archivio vanno esportate prima. Da riga di comando:
+
+```bash
+e4fsck -fn disco.img
+```
+
+```bash
+e4fsck -fy '\\.\Harddisk2Partition1'
+```
+
+Con `--draft file.wx4draft` le riparazioni vanno in una bozza.
+
 ### Modifica come bozza
 
 **Modifica come bozza** permette di modificare un disco, un'immagine o anche un'immagine dentro un archivio **senza scrivere sulla sorgente**:
@@ -153,6 +173,7 @@ dotnet run --project tests/MountTest -- tests/work/copia.img
 - `run_tests.sh` scrive sulle immagini con `e4cli.exe` (crea, sovrascrive, rinomina, sposta, cancella, tronca, crea link simbolici). Poi le verifica con **`e2fsck -fn` e `debugfs` di Linux**.
 - `MountTest` monta l'immagine con WinFsp e la usa con le normali API di file di Windows (copia, append, scrittura casuale, spostamento, attributi, date, eliminazione ricorsiva).
 - `tests/make_dirty_journal.sh` crea un'immagine con una transazione nel journal non ancora applicata, per provare la riproduzione del journal.
+- `tests/fsck_test.sh` confronta `e4fsck` con l'e2fsck di Linux su immagini danneggiate con `debugfs` (`tests/make_fsck_images.sh`): stessi problemi trovati, riparazioni `-p`/`-y` che Linux poi vede pulite, riparazione in bozza applicata, recupero del journal. `tests/ui/fsck_test.ps1` fa lo stesso dalla GUI.
 - `tests/draft_test.sh` prova le bozze con `e4cli` (sorgente intatta, ripresa dopo una scrittura interrotta, impronta, applicazione idempotente verificata con `e2fsck`/`debugfs`); `tests/ui/draft_logic_test.ps1` e `tests/ui/draft_test.ps1` fanno lo stesso dalla libreria .NET e dalla GUI.
 
 ## Struttura
@@ -164,6 +185,7 @@ native/            ext4core.dll (C, MSVC)
   src/scan.c       ricerca delle partizioni ext su dischi fisici e immagini MBR/GPT
   src/overlay.c    bozze: delta copy-on-write a blocchi da 4 KB, commit, applicazione
   tools/e4cli.c    piccolo client a riga di comando usato dai test
+  fsck/            e4fsck.exe: e2fsck sull'I/O di WinExt4 (dischi, immagini, bozze) + adattamenti POSIX
 src/WinExt4/       GUI WPF (.NET 8) + montaggio WinFsp (Mount/Ext4FileSystem.cs)
 tests/             immagini di prova e test end-to-end
 third_party/       e2fsprogs (sottomodulo)
@@ -171,8 +193,7 @@ third_party/       e2fsprogs (sottomodulo)
 
 ## Roadmap
 
-Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
-- fsck integrato.
+Tutte le funzioni della [roadmap](docs/ROADMAP.md) sono implementate; il documento descrive le scelte fatte e i limiti rimasti.
 
 ## Licenza
 

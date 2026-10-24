@@ -16,3 +16,9 @@ cc -I"$E/lib" -I"$E/lib/ext2fs" -o /tmp/gen_crc32ctable "$E/lib/ext2fs/gen_crc32
 /tmp/gen_crc32ctable > crc32c_table.h
 rm -f /tmp/gen_crc32ctable
 ls -la "$G"
+
+# lib/support error table (e4fsck: e2fsck profile support)
+mkdir -p "$G/support"
+cd "$G/support"
+awk -f "$E/lib/et/et_h.awk" outfile=prof_err.h outfn=prof_err.h "$E/lib/support/prof_err.et"
+awk -f "$E/lib/et/et_c.awk" outfile=prof_err.c outfn=prof_err.c "$E/lib/support/prof_err.et"

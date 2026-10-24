@@ -179,6 +179,12 @@
             </Border>
             <Border x:Name="WarnBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource WarnBrush}">
                 <DockPanel>
+                    <Button x:Name="BtnFsck" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                            Click="OnFsckFromBanner" Visibility="Collapsed" VerticalAlignment="Top"
+                            AutomationProperties.AutomationId="BtnFsck">
+                        <TextBlock Text="Controlla…" Foreground="{StaticResource WarnTextBrush}"
+                                   FontWeight="SemiBold" TextDecorations="Underline" />
+                    </Button>
                     <Button x:Name="BtnFixType" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
                             Click="OnFixPartitionType" Visibility="Collapsed" VerticalAlignment="Top">
                         <TextBlock Text="Imposta tipo «Linux»" Foreground="{StaticResource WarnTextBrush}"
@@ -233,6 +239,7 @@
                         <ListBox.ContextMenu>
                             <ContextMenu>
                                 <MenuItem x:Name="ScProperties" Header="Proprietà…" Click="OnSourceProperties" FontWeight="SemiBold" />
+                                <MenuItem x:Name="ScFsck" Header="Controlla e ripara (fsck)…" Click="OnSourceFsck" />
                                 <Separator />
                                 <MenuItem x:Name="ScHashPartition" Header="Calcola hash della partizione" Click="OnHashPartition" />
                                 <MenuItem x:Name="ScHashDisk" Header="Calcola hash dell'intero disco" Click="OnHashDisk" />

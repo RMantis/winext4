@@ -8,7 +8,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 | 2 | ✅ Controllo GUID delle partizioni | — | piccola |
 | 3 | ✅ Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
 | 4 | ✅ Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
-| 5 | fsck integrato | — | media |
+| 5 | ✅ fsck integrato | — | media |
 | 6 | ✅ Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
 | 7 | ✅ «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
 | 8 | ✅ Anteprima di testo e immagini nella finestra | — | piccola |
@@ -165,7 +165,14 @@ Aprire direttamente `backup.tar.gz` o `raspios.img.xz` e sfogliare, estrarre o m
 
 ---
 
-## 5. fsck
+## 5. ✅ fsck
+
+*Implementato* con una differenza rispetto al progetto qui sotto: e2fsck non è caricato nella DLL ma compilato come programma a sé, `e4fsck.exe`, che la GUI esegue come processo figlio leggendone output e avanzamento (`-C 2`). e2fsck è un programma, non una libreria: ha stato globale e chiama `exit()` sugli errori fatali, e in un processo separato questo non è un problema.
+- **Porting**: i sorgenti di `e2fsck/`, `lib/support` e `lib/e2p` compilano con MSVC grazie a poche intestazioni POSIX in `native/fsck/posix`, `fsck_port.h` (incluso a forza) e qualche funzione in `posix_stubs.c` (directory, `pipe`, stub per `fork` e il catcher dei segnali). Le modifiche ai sorgenti di e2fsprogs sono solo due righe in più nella patch MSVC (macro variadiche GNU, `/dev/null`).
+- **I/O**: `e4fsck` apre la sorgente con lo stesso `winio.c` di ext4core (immagini, volumi con blocco e smontaggio, offset/lunghezza della partizione) e passa a e2fsck un nome `w4dev:` servito dall'`io_manager` di WinExt4; la dimensione del dispositivo viene dal nostro livello. Con `--draft` legge la sorgente e scrive in una bozza.
+- **Modalità**: controllo `-n`, riparazione in bozza, `-p`, `-y`. Nella GUI il controllo viene proposto quando il filesystem ha errori, non è pulito, ha errori registrati dal kernel o ha superato il numero di montaggi o l'intervallo di controllo.
+- **Verifica**: su immagini danneggiate con `debugfs` (link count, inode cancellato con voce ancora presente, directory scollegata, bitmap e contatori sbagliati) e2fsck di Linux e `e4fsck` riportano gli stessi problemi, e dopo la riparazione di `e4fsck` l'e2fsck di Linux trova il filesystem pulito.
+- **Limiti**: niente interruzione di una riparazione diretta (la si fa in bozza se serve poterla annullare); niente controllo diretto delle immagini dentro archivi; `LABEL=`/`UUID=`, journal esterni e `-c` (badblocks) non sono supportati.
 
 ### Obiettivo
 

@@ -1,3 +1,33 @@
+diff --git a/e2fsck/readahead.c b/e2fsck/readahead.c
+index 38d4ec4..b55eebb 100644
+--- a/e2fsck/readahead.c
++++ b/e2fsck/readahead.c
+@@ -17,9 +17,9 @@
+ #undef DEBUG
+ 
+ #ifdef DEBUG
+-# define dbg_printf(f, a...)  do {printf(f, ## a); fflush(stdout); } while (0)
++# define dbg_printf(f, ...)  do {printf(f, ## __VA_ARGS__); fflush(stdout); } while (0)
+ #else
+-# define dbg_printf(f, a...)
++# define dbg_printf(f, ...)
+ #endif
+ 
+ struct read_dblist {
+diff --git a/e2fsck/unix.c b/e2fsck/unix.c
+index 7768f0e..23d3c6a 100644
+--- a/e2fsck/unix.c
++++ b/e2fsck/unix.c
+@@ -622,6 +622,9 @@ static void reserve_stdio_fds(void)
+ {
+ 	int	fd = 0;
+ 
++#ifdef _WIN32
++	return;	/* the filesystem is not opened through a file descriptor */
++#endif
+ 	while (fd <= 2) {
+ 		fd = open("/dev/null", O_RDWR);
+ 		if (fd < 0) {
 diff --git a/lib/ext2fs/alloc.c b/lib/ext2fs/alloc.c
 index 3fd9216..97cfbf7 100644
 --- a/lib/ext2fs/alloc.c
@@ -86,3 +116,26 @@ index c48e74e..6d9d20c 100644
  #endif
  
  /* Free a range of blocks, respecting cluster boundaries */
+diff --git a/lib/support/common.h b/lib/support/common.h
+index 00a9375..1f7362a 100644
+--- a/lib/support/common.h
++++ b/lib/support/common.h
+@@ -21,14 +21,14 @@
+ # endif
+ #endif
+ 
+-#define log_err(format, arg ...)					\
++#define log_err(format, ...)					\
+ 	fprintf(stderr, "[ERROR] %s:%d:%s: " format "\n",		\
+-		__FILE__, __LINE__, __func__, ## arg)
++		__FILE__, __LINE__, __func__, ## __VA_ARGS__)
+ 
+ #ifdef DEBUG_QUOTA
+-# define log_debug(format, arg ...)					\
++# define log_debug(format, ...)					\
+ 	fprintf(stderr, "[DEBUG] %s:%d:%s: " format "\n",		\
+-		__FILE__, __LINE__, __func__, ## arg)
++		__FILE__, __LINE__, __func__, ## __VA_ARGS__)
+ #else
+ # define log_debug(...)
+ #endif

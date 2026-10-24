@@ -17,7 +17,9 @@
 extern "C" {
 #endif
 
-#ifdef EXT4CORE_BUILD
+#if defined(E4_STATIC)		/* sources compiled into another program (e4fsck) */
+#define E4_API
+#elif defined(EXT4CORE_BUILD)
 #define E4_API __declspec(dllexport)
 #else
 #define E4_API __declspec(dllimport)

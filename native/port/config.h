@@ -1,7 +1,7 @@
 /*
  * Hand-written config.h for building libext2fs with MSVC on Windows x64.
- * Only what the library itself needs; the programs (e2fsck, mke2fs...) are
- * not built.
+ * Only what the library itself needs; e2fsck adds its own settings in
+ * native/fsck/fsck_port.h. The other programs (mke2fs...) are not built.
  */
 #ifndef WINEXT4_CONFIG_H
 #define WINEXT4_CONFIG_H

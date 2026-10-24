@@ -40,6 +40,8 @@
   <ItemGroup>
     <!-- ext4core.dll: libext2fs + our Windows I/O layer, built by native\build.cmd -->
     <None Include="$(NativeOut)\ext4core.dll" Link="ext4core.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(NativeOut)\ext4core.dll')" />
+    <!-- e4fsck.exe: e2fsck on the same I/O layer, run as a child process; stays a separate file -->
+    <None Include="$(NativeOut)\e4fsck.exe" Link="e4fsck.exe" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" Condition="Exists('$(NativeOut)\e4fsck.exe')" />
     <Resource Include="Assets\winext4.ico" />
   </ItemGroup>
 

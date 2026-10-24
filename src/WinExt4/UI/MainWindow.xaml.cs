@@ -726,6 +726,91 @@ public partial class MainWindow : Window
         ScWritePartition.IsEnabled = !busy && disk && s.PartitionNumber > 0;
         ScZeroFree.IsEnabled = !busy && s.IsExt;
         ScWriteDisk.IsEnabled = !busy && disk;
+        ScFsck.IsEnabled = !busy && s.IsExt && Fsck.Supported(s);
+    }
+
+    private async void OnSourceFsck(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource is { } item) await FsckAsync(item);
+    }
+
+    private async void OnFsckFromBanner(object sender, RoutedEventArgs e)
+    {
+        if (_current is { } item) await FsckAsync(item);
+    }
+
+    /// <summary>Opens the fsck dialog; the volume is closed for repairs and reopened afterwards.</summary>
+    private async Task FsckAsync(SourceItem item)
+    {
+        if (_operation is not null) return;
+        var s = item.Source;
+        if (!Fsck.Available)
+        {
+            MessageBox.Show(this, $"Manca {Fsck.Exe}: reinstalla WinExt4.", "Controllo del filesystem",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (!Fsck.Supported(s))
+        {
+            MessageBox.Show(this, "Un'immagine dentro un archivio non si può controllare direttamente: esportala come .img e controlla quella.",
+                "Controllo del filesystem", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        bool isCurrent = _current == item && _vol is not null;
+        string? draft = isCurrent ? _vol!.DraftPath : null;
+        bool wasRw = isCurrent && _vol!.ReadWrite && draft is null;
+        string path = _cwdPath;
+        bool closed = false;
+        var reasons = isCurrent ? FsckReasons() : new List<string>();
+        var dlg = new FsckDialog(s, draft, reasons, async mode =>
+        {
+            // repairs need the source (or the draft file) to themselves; a check
+            // must not read a filesystem this window is writing
+            if (!closed && isCurrent && (mode != FsckMode.Check || draft is not null || wasRw))
+            {
+                await CloseVolumeAsync();
+                closed = true;
+            }
+        }) { Owner = this };
+        dlg.ShowDialog();
+        if (dlg.DraftToOpen is { } d)
+        {
+            if (!closed && _vol is not null && !await ConfirmLeaveCurrentAsync()) return;
+            await OpenDraftAsync(item, d);
+            SetStatus("Riparazione salvata nella bozza: «Modifiche…» mostra cosa è cambiato, «Applica…» la scrive sulla sorgente.");
+            return;
+        }
+        if (closed)
+        {
+            if (draft is not null)
+            {
+                await OpenDraftAsync(item, draft, path);
+            }
+            else
+            {
+                await OpenSourceAsync(item, wasRw);
+                if (_vol is null && wasRw) await OpenSourceAsync(item, false);
+                if (_vol is not null)
+                {
+                    SourcesList.SelectedItem = item;
+                    await NavigateAsync(path);
+                }
+            }
+        }
+        if (dlg.Result is { } r) SetStatus("Controllo del filesystem: " + r.Summary);
+    }
+
+    private List<string> FsckReasons()
+    {
+        if (_vol is null) return new();
+        try
+        {
+            return Fsck.Reasons(_vol.GetInfo(), _vol.GetSuper());
+        }
+        catch (Ext4Exception)
+        {
+            return new();
+        }
     }
 
     private async void OnSourceProperties(object sender, RoutedEventArgs e)
@@ -1633,9 +1718,16 @@ public partial class MainWindow : Window
         if (info.NeedsRecovery)
             warnings.Add("Il journal contiene modifiche non ancora applicate (il disco non è stato smontato bene): alcuni file potrebbero sembrare vecchi. Sbloccando la scrittura verranno applicate.");
         else if (!info.Clean && !rw)
-            warnings.Add("Il filesystem non risulta smontato correttamente: su Linux è consigliato e2fsck.");
+            warnings.Add("Il filesystem non risulta smontato correttamente: è consigliato un controllo.");
         if (info.HasErrors)
-            warnings.Add("Il filesystem è segnato con errori: esegui e2fsck su Linux prima di scriverci.");
+            warnings.Add("Il filesystem è segnato con errori: controllalo e riparalo prima di scriverci.");
+        var reasons = FsckReasons();
+        // errors and unclean unmounts are already explained above
+        var extra = reasons.Skip(info.HasErrors || !info.Clean ? 1 : 0).ToList();
+        if (extra.Count > 0)
+            warnings.Add("Controllo del filesystem consigliato: " + string.Join("; ", extra) + ".");
+        BtnFsck.Visibility = reasons.Count > 0 && !busy && _current is not null && Fsck.Supported(_current.Source) && Fsck.Available
+            ? Visibility.Visible : Visibility.Collapsed;
         if (_current is not null)
             warnings.AddRange(_current.Findings.Select(f => f.Text));
         BtnFixType.Visibility = _current?.Findings.Any(f => f.CanFixType) == true ? Visibility.Visible : Visibility.Collapsed;
