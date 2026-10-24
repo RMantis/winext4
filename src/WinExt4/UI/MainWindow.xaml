@@ -193,7 +193,20 @@
                 <Grid>
                     <ListBox x:Name="SourcesList" ItemsSource="{Binding Source={StaticResource SourcesView}}"
                              BorderThickness="0" Background="Transparent" SelectionChanged="OnSourceSelected"
+                             PreviewMouseRightButtonDown="OnSourcesRightButtonDown" ContextMenuOpening="OnSourcesContextMenuOpening"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="ScHashPartition" Header="Calcola hash della partizione" Click="OnHashPartition" />
+                                <MenuItem x:Name="ScHashDisk" Header="Calcola hash dell'intero disco" Click="OnHashDisk" />
+                                <Separator />
+                                <MenuItem x:Name="ScExportPartition" Header="Esporta partizione come immagine…" Click="OnExportPartition" />
+                                <MenuItem x:Name="ScExportDisk" Header="Esporta intero disco come immagine…" Click="OnExportDisk" />
+                                <Separator />
+                                <MenuItem x:Name="ScWritePartition" Header="Scrivi un'immagine sulla partizione…" Click="OnWritePartition" />
+                                <MenuItem x:Name="ScWriteDisk" Header="Scrivi un'immagine sull'intero disco…" Click="OnWriteDisk" />
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
                         <ListBox.GroupStyle>
                             <GroupStyle>
                                 <GroupStyle.HeaderTemplate>
@@ -271,6 +284,11 @@
                                 <MenuItem x:Name="CmOpen" Header="Apri" Click="OnContextOpen" FontWeight="SemiBold" />
                                 <MenuItem x:Name="CmOpenWith" Header="Apri con" />
                                 <MenuItem x:Name="CmExport" Header="Estrai in…" Click="OnExport" />
+                                <MenuItem x:Name="CmHash" Header="Calcola hash">
+                                    <MenuItem Header="MD5 (md5sum)" Click="OnHashFilesMd5" />
+                                    <MenuItem Header="SHA-256 (sha256sum)" Click="OnHashFilesSha256" />
+                                </MenuItem>
+                                <MenuItem x:Name="CmVerify" Header="Verifica con un file md5sum/sha256sum…" Click="OnVerifyHashes" />
                                 <Separator />
                                 <MenuItem x:Name="CmRename" Header="Rinomina" Click="OnRename" InputGestureText="F2" />
                                 <MenuItem x:Name="CmDelete" Header="Elimina" Click="OnDelete" InputGestureText="Canc" />

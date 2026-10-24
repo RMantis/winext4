@@ -4,7 +4,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 
 | # | Funzione | Dipende da | Dimensione |
 |---|---|---|---|
-| 1 | Hash e verifica (immagini, dischi, file) | — | piccola |
+| 1 | ✅ Hash e verifica (immagini, dischi, file) | — | piccola |
 | 2 | ✅ Controllo GUID delle partizioni | — | piccola |
 | 3 | Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
 | 4 | Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
@@ -18,7 +18,9 @@ I punti 7, 8 e 9 sono miglioramenti dell'interfaccia indipendenti dagli altri: s
 
 ---
 
-## 1. Hash e integrità
+## 1. ✅ Hash e integrità
+
+*Implementato* (hash, export con `.md5`/`.sha256` e file sparso, scrittura con verifica preventiva e rilettura, protezione del disco di sistema, hash e verifica dei file interni). La scrittura su disco intero è da verificare su hardware reale.
 
 ### Cosa serve
 

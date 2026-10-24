@@ -214,6 +214,21 @@ E4_API int e4_enum_disks(e4_part_cb cb, void *ctx);
 /* Raw image (.img): whole-filesystem image or an MBR/GPT disk image. */
 E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx);
 
+/* ---- raw access (hashing, imaging, writing images) ---- */
+typedef struct e4_raw e4_raw;
+
+#define E4_RAW_WRITE 0x1 /* volumes are locked; for \\.\PhysicalDriveN all its volumes */
+
+E4_API int e4_raw_open(const wchar_t *path, uint64_t offset, uint64_t length,
+		       uint32_t flags, e4_raw **out);
+E4_API int e4_raw_size(e4_raw *r, uint64_t *size);
+E4_API int e4_raw_read(e4_raw *r, uint64_t pos, void *buf, uint32_t len);
+E4_API int e4_raw_write(e4_raw *r, uint64_t pos, const void *buf, uint32_t len);
+E4_API int e4_raw_flush(e4_raw *r);
+E4_API int e4_raw_close(e4_raw *r);
+/* Disk numbers backing a volume (e.g. L"\\\\.\\C:"); -1 if it cannot be opened. */
+E4_API int e4_volume_disks(const wchar_t *volume, int *disks, int max);
+
 E4_API const char *e4_strerror(int code);
 E4_API const char *e4_version(void);
 

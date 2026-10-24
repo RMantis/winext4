@@ -92,8 +92,9 @@ static int win_to_errno(DWORD err)
 }
 
 int w4_dev_open(const wchar_t *path, uint64_t offset, uint64_t length,
-		int writable, w4_dev **out)
+		int dev_flags, w4_dev **out)
 {
+	int writable = (dev_flags & W4_DEV_WRITE) != 0;
 	w4_dev *dev;
 	DWORD access = GENERIC_READ | (writable ? GENERIC_WRITE : 0);
 	DWORD share, flags = 0, ret;
@@ -140,7 +141,7 @@ int w4_dev_open(const wchar_t *path, uint64_t offset, uint64_t length,
 			w4_dev_close(dev);
 			return EIO;
 		}
-		if (writable) {
+		if (writable && !(dev_flags & W4_DEV_NOLOCK)) {
 			/*
 			 * Explorer or the shell may briefly hold the volume
 			 * open right after the disk arrives; retry a little.

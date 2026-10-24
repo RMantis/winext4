@@ -353,7 +353,7 @@ E4_API int e4_open(const wchar_t *path, uint64_t offset, uint64_t length,
 	InitializeCriticalSection(&f->cs);
 	f->rw = rw;
 
-	ret = w4_dev_open(path, offset, length, rw, &f->dev);
+	ret = w4_dev_open(path, offset, length, rw ? W4_DEV_WRITE : 0, &f->dev);
 	if (ret)
 		goto fail;
 

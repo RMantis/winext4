@@ -628,6 +628,207 @@ public partial class MainWindow : Window
         await OpenSourceAsync(again, readWrite);
     }
 
+    // ==================================================================
+    // hashes, images
+
+    private SourceItem? _contextSource;
+
+    private void OnSourcesRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Right-click must not select (= open) the partition, only target the menu.
+        _contextSource = (e.OriginalSource as FrameworkElement)?.DataContext as SourceItem;
+        e.Handled = true;
+        if (_contextSource is not null)
+        {
+            SourcesList.ContextMenu.PlacementTarget = SourcesList;
+            SourcesList.ContextMenu.IsOpen = true;
+        }
+    }
+
+    private void OnSourcesContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (_contextSource is null) { e.Handled = true; return; }
+        var s = _contextSource.Source;
+        bool disk = !s.IsImage;
+        bool busy = _operation is not null;
+        ScHashPartition.IsEnabled = ScExportPartition.IsEnabled = !busy && s.PartitionNumber > 0;
+        ScHashDisk.Header = disk ? "Calcola hash dell'intero disco" : "Calcola hash dell'immagine intera";
+        ScHashDisk.IsEnabled = !busy;
+        ScExportDisk.IsEnabled = !busy && disk;
+        ScWritePartition.IsEnabled = !busy && disk && s.PartitionNumber > 0;
+        ScWriteDisk.IsEnabled = !busy && disk;
+    }
+
+    /// <summary>Runs a background job with the status-bar progress and cancel button.</summary>
+    private async Task<(bool Ok, T? Result)> RunJobAsync<T>(string title, Func<IProgress<JobProgress>, CancellationToken, T> job)
+    {
+        if (_operation is not null) return (false, default);
+        var cts = new CancellationTokenSource();
+        _operation = cts;
+        ProgressPanel.Visibility = Visibility.Visible;
+        Progress.Value = 0;
+        UpdateUi();
+        var started = DateTime.UtcNow;
+        var progress = new Progress<JobProgress>(p =>
+        {
+            Progress.Value = p.Total > 0 ? 1000.0 * p.Done / p.Total : 0;
+            double secs = (DateTime.UtcNow - started).TotalSeconds;
+            string speed = secs > 1 && p.Total > 1000 ? $" · {Format.Size((ulong)(p.Done / secs))}/s" : "";
+            SetStatus(p.Total > 1000
+                ? $"{title} – {p.Phase}: {Format.Size((ulong)p.Done)} di {Format.Size((ulong)p.Total)}{speed}"
+                : $"{title} – {p.Phase} ({p.Done}/{p.Total})");
+        });
+        try
+        {
+            var r = await Task.Run(() => job(progress, cts.Token), cts.Token);
+            SetStatus($"{title}: completato.");
+            return (true, r);
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus($"{title}: annullato.");
+        }
+        catch (Exception ex) when (ex is Ext4Exception or IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"{title}: {ex.Message}");
+            MessageBox.Show(this, ex.Message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _operation = null;
+            ProgressPanel.Visibility = Visibility.Collapsed;
+            UpdateUi();
+        }
+        return (false, default);
+    }
+
+    private static string ImageName(Ext4Source s, bool whole) =>
+        $"{(s.Label.Length > 0 ? s.Label : s.IsImage ? Path.GetFileNameWithoutExtension(s.ImagePath) : $"disco{s.DiskNumber}")}" +
+        $"{(whole ? "" : $"-p{s.PartitionNumber}")}-{DateTime.Now:yyyyMMdd}.img";
+
+    private async Task HashTargetAsync(RawTarget t, string sidecarName)
+    {
+        var (ok, r) = await RunJobAsync("Hash", (p, ct) => Core.Imaging.Hash(t, p, ct));
+        if (ok && r is not null)
+            new HashResultDialog(t.Description, r, sidecarName) { Owner = this }.ShowDialog();
+    }
+
+    private async void OnHashPartition(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource?.Source is { } s) await HashTargetAsync(RawTarget.Partition(s), ImageName(s, false));
+    }
+
+    private async void OnHashDisk(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource?.Source is { } s) await HashTargetAsync(RawTarget.WholeDisk(s), ImageName(s, true));
+    }
+
+    private async Task ExportAsync(Ext4Source s, RawTarget t, bool whole)
+    {
+        ulong size = t.Length > 0 ? t.Length : s.DiskSize;
+        var d = new ExportImageDialog(t, size, ImageName(s, whole)) { Owner = this };
+        if (d.ShowDialog() != true) return;
+        var (ok, r) = await RunJobAsync("Esportazione", (p, ct) => Core.Imaging.Export(t, d.ImagePath, d.Sparse, d.Verify, p, ct));
+        if (ok && r is not null)
+        {
+            new HashResultDialog($"Immagine creata: {d.ImagePath}", r, null) { Owner = this }.ShowDialog();
+            SetStatus($"Immagine salvata in {d.ImagePath} (con .md5 e .sha256).");
+        }
+    }
+
+    private async void OnExportPartition(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource?.Source is { } s) await ExportAsync(s, RawTarget.Partition(s), false);
+    }
+
+    private async void OnExportDisk(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource?.Source is { } s) await ExportAsync(s, RawTarget.WholeDisk(s), true);
+    }
+
+    private async Task WriteImageAsync(Ext4Source s, RawTarget t)
+    {
+        var d = new WriteImageDialog(t, s.Model.Length > 0 ? s.Model : null) { Owner = this };
+        if (d.ShowDialog() != true) return;
+        // The open volume, if it is on the target, must be released first.
+        if (_current is not null && !_current.Source.IsImage && _current.Source.DiskNumber == s.DiskNumber)
+            await CloseVolumeAsync();
+        var (ok, r) = await RunJobAsync("Scrittura immagine",
+            (p, ct) => Core.Imaging.WriteImage(d.ImagePath, t, d.Expected, d.PreVerify, d.Readback, p, ct));
+        if (ok && r is not null)
+        {
+            string msg = $"Immagine scritta su {t.Description}.\n\nSHA-256: {r.Image.Sha256}\nMD5: {r.Image.Md5}";
+            if (r.ExpectedFromSidecar is not null) msg += $"\n\n✔ Corrisponde a {r.ExpectedFromSidecar}";
+            if (r.Readback is not null) msg += "\n✔ La rilettura del disco corrisponde all'immagine";
+            MessageBox.Show(this, msg, "Scrittura completata", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        await Task.Delay(1500);
+        await RescanAsync();
+    }
+
+    private async void OnWritePartition(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource?.Source is { } s) await WriteImageAsync(s, RawTarget.Partition(s));
+    }
+
+    private async void OnWriteDisk(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource?.Source is { } s) await WriteImageAsync(s, RawTarget.WholeDisk(s));
+    }
+
+    private async Task HashFilesAsync(System.Security.Cryptography.HashAlgorithmName algo, string tool)
+    {
+        if (_vol is not { } vol) return;
+        var sel = Selected();
+        if (sel.Count == 0) return;
+        uint dir = _cwdIno;
+        var (ok, list) = await RunJobAsync("Hash dei file",
+            (p, ct) => FileHashes.Compute(vol, dir, sel.Select(i => i.Entry), algo, p, ct));
+        if (!ok || list is null) return;
+        string text = FileHashes.Format(list);
+        string ext = tool == "md5sum" ? "md5" : "sha256";
+        new TextResultDialog("Hash dei file",
+            $"{list.Count} file · formato {tool} (verificabile su Linux con «{tool} -c» dalla cartella {_cwdPath})",
+            text, sel.Count == 1 ? $"{sel[0].Entry.Name}.{ext}" : $"{ext.ToUpperInvariant()}SUMS") { Owner = this }.ShowDialog();
+    }
+
+    private async void OnHashFilesMd5(object sender, RoutedEventArgs e) =>
+        await HashFilesAsync(System.Security.Cryptography.HashAlgorithmName.MD5, "md5sum");
+
+    private async void OnHashFilesSha256(object sender, RoutedEventArgs e) =>
+        await HashFilesAsync(System.Security.Cryptography.HashAlgorithmName.SHA256, "sha256sum");
+
+    private async void OnVerifyHashes(object sender, RoutedEventArgs e)
+    {
+        if (_vol is not { } vol) return;
+        string text;
+        string source;
+        // A list stored inside the ext filesystem can be selected directly.
+        if (FileList.SelectedItem is EntryItem { IsDirectoryLike: false } it &&
+            System.Text.RegularExpressions.Regex.IsMatch(it.Entry.Name, @"(?i)(\.(md5|sha1|sha256|sha512)|sums?)$"))
+        {
+            var bytes = new byte[Math.Min(it.Stat.Size, 16UL << 20)];
+            vol.Read(it.IsLink ? it.TargetIno : it.Entry.Ino, 0, bytes);
+            text = System.Text.Encoding.UTF8.GetString(bytes);
+            source = it.Entry.Name;
+        }
+        else
+        {
+            var d = new OpenFileDialog { Title = "File md5sum/sha256sum da verificare", Filter = "Liste di hash (*.md5;*.sha256;*SUMS)|*.md5;*.sha1;*.sha256;*.sha512;*SUMS;*sums|Tutti i file|*.*" };
+            if (d.ShowDialog(this) != true) return;
+            text = File.ReadAllText(d.FileName);
+            source = Path.GetFileName(d.FileName);
+        }
+        string dir = _cwdPath;
+        var (ok, results) = await RunJobAsync("Verifica", (p, ct) => FileHashes.Verify(vol, dir, text, p, ct));
+        if (!ok || results is null) return;
+        int good = results.Count(r => r.Status == "OK");
+        string report = string.Join("\n", results.Select(r => $"{r.Status,-9} {r.RelativePath}"));
+        new TextResultDialog("Verifica degli hash",
+            $"{source}: {good} OK su {results.Count}" + (good == results.Count ? " ✔" : $" · {results.Count - good} con problemi"),
+            report, null) { Owner = this }.ShowDialog();
+    }
+
     private void OnOpenInExplorer(object sender, RoutedEventArgs e)
     {
         if (_mount is not null)
@@ -1180,6 +1381,8 @@ public partial class MainWindow : Window
         CmOpen.IsEnabled = n >= 1;
         FillOpenWithMenu();
         CmExport.IsEnabled = n > 0;
+        CmHash.IsEnabled = n > 0;
+        CmVerify.IsEnabled = _vol is not null;
         CmRename.IsEnabled = rw && n == 1;
         CmDelete.IsEnabled = rw && n > 0;
         CmNewFolder.IsEnabled = rw;

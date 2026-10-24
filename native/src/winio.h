@@ -19,9 +19,12 @@ typedef struct w4_dev {
 	DWORD last_error;  /* last Win32 error seen, for diagnostics */
 } w4_dev;
 
+#define W4_DEV_WRITE 0x1  /* open for writing (locks and dismounts a volume) */
+#define W4_DEV_NOLOCK 0x2 /* caller takes care of locking (whole disks) */
+
 /* Returns 0 or an ext4core error code (errno range or E4_*). */
 int w4_dev_open(const wchar_t *path, uint64_t offset, uint64_t length,
-		int writable, w4_dev **out);
+		int flags, w4_dev **out);
 void w4_dev_close(w4_dev *dev);
 
 /* Positional I/O relative to dev->offset; handles sector alignment. */

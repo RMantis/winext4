@@ -187,6 +187,29 @@ internal static unsafe class Ext4Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
     public static extern int e4_enum_image(string path, delegate* unmanaged[Cdecl]<IntPtr, Part*, int> cb, IntPtr ctx);
 
+    public const uint RawWrite = 0x1;
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_raw_open(string path, ulong offset, ulong length, uint flags, out IntPtr raw);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_raw_size(IntPtr raw, out ulong size);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_raw_read(IntPtr raw, ulong pos, void* buf, uint len);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_raw_write(IntPtr raw, ulong pos, void* buf, uint len);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_raw_flush(IntPtr raw);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_raw_close(IntPtr raw);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int e4_volume_disks(string volume, int* disks, int max);
+
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr e4_strerror(int code);
 

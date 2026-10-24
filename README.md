@@ -36,6 +36,15 @@ Le immagini si aprono in tre modi: con «Apri immagine», trascinando il file ne
 - immagini disco con tabella MBR (anche partizioni logiche);
 - immagini disco con tabella GPT.
 
+### Hash, immagini e scrittura su disco
+
+Clic destro su una partizione nell'elenco a sinistra:
+- **Calcola hash** della partizione, del disco intero o dell'immagine intera (MD5 e SHA-256 in un solo passaggio, con confronto con un hash incollato e salvataggio di `.md5`/`.sha256`).
+- **Esporta come immagine** (partizione o disco intero): l'hash viene calcolato durante la copia e accanto all'immagine vengono creati `.md5` e `.sha256` in formato `md5sum`, verificabili anche su Linux. Opzioni: file sparso (le zone a zero non occupano spazio) e rilettura di verifica.
+- **Scrivi un'immagine** sulla partizione o sul disco intero: se accanto all'immagine c'è un `.sha256`/`.md5` (o `SHA256SUMS`) viene verificata prima di scrivere; dopo la scrittura il disco viene riletto e confrontato. Il disco da cui gira Windows non è mai una destinazione ammessa, la dimensione viene controllata, le unità del disco vengono smontate e serve una conferma esplicita.
+
+Nel menu dei file: **Calcola hash → MD5 / SHA-256** produce un elenco in formato `md5sum`/`sha256sum` (anche ricorsivo sulle cartelle), e **Verifica con un file md5sum/sha256sum** controlla i file della cartella corrente contro un elenco (selezionato nel disco ext o scelto da Windows), segnalando file diversi o mancanti.
+
 ### Controllo delle partizioni
 
 Per ogni partizione WinExt4 legge tipo (GUID GPT o tipo MBR), PARTUUID, nome e attributi GPT, e verifica CRC e copia di backup della tabella GPT. Accanto alla partizione compare un ⚠ (con i dettagli nel suggerimento e in un avviso quando la apri) se:
@@ -129,7 +138,6 @@ third_party/       e2fsprogs (sottomodulo)
 ## Roadmap
 
 Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
-- hash e verifica di immagini, dischi e file (`.md5`);
 - azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
 - proprietà complete della partizione, con modifica di etichetta, UUID, spazio riservato, nome e tipo della partizione;
