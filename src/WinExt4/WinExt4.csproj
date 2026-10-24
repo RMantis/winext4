@@ -43,6 +43,11 @@
     <Resource Include="Assets\winext4.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Joveler.Compression.XZ" Version="5.0.2" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+  </ItemGroup>
+
   <Target Name="CheckNative" BeforeTargets="Build">
     <Error Condition="!Exists('$(NativeOut)\ext4core.dll')" Text="ext4core.dll not found: run native\build.cmd first." />
   </Target>

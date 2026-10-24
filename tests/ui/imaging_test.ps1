@@ -31,7 +31,7 @@ Check ($hw.Bytes -eq (Get-Item $disk).Length) 'whole image size'
 "== export"
 $out = Join-Path $work 'exported-p1.img'
 Remove-Item "$out*" -ErrorAction SilentlyContinue
-$e = [WinExt4.Core.Imaging]::Export($part, $out, $true, $true, $null, $none)
+$e = [WinExt4.Core.Imaging]::Export($part, $out, [WinExt4.Core.ImageFormat]::Raw, $true, $true, $null, $none).Raw
 Check ($e.Sha256 -eq $h.Sha256) 'export hash equals partition hash'
 Check ((Test-Path "$out.md5") -and (Test-Path "$out.sha256")) 'sidecar files written'
 $c = wsl -d Debian -- sh -c "cd '$(W $work)' && md5sum -c exported-p1.img.md5 && sha256sum -c exported-p1.img.sha256"

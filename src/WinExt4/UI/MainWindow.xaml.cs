@@ -657,6 +657,7 @@ public partial class MainWindow : Window
         ScHashDisk.IsEnabled = !busy;
         ScExportDisk.IsEnabled = !busy && disk;
         ScWritePartition.IsEnabled = !busy && disk && s.PartitionNumber > 0;
+        ScZeroFree.IsEnabled = !busy && s.IsExt;
         ScWriteDisk.IsEnabled = !busy && disk;
     }
 
@@ -782,10 +783,13 @@ public partial class MainWindow : Window
         ulong size = t.Length > 0 ? t.Length : s.DiskSize;
         var d = new ExportImageDialog(t, size, ImageName(s, whole)) { Owner = this };
         if (d.ShowDialog() != true) return;
-        var (ok, r) = await RunJobAsync("Esportazione", (p, ct) => Core.Imaging.Export(t, d.ImagePath, d.Sparse, d.Verify, p, ct));
+        var (ok, r) = await RunJobAsync("Esportazione", (p, ct) => Core.Imaging.Export(t, d.ImagePath, d.SelectedFormat, d.Sparse, d.Verify, p, ct));
         if (ok && r is not null)
         {
-            new HashResultDialog($"Immagine creata: {d.ImagePath}", r, null) { Owner = this }.ShowDialog();
+            string what = $"Immagine creata: {d.ImagePath}";
+            if (d.SelectedFormat != ImageFormat.Raw)
+                what += $"\nFile: {Format.Size((ulong)r.FileBytes)} ({100.0 * r.FileBytes / Math.Max(1, (double)r.Raw.Bytes):0.#}% dei dati) · SHA-256 del file: {r.FileSha256}\nHash dei dati decompressi:";
+            new HashResultDialog(what, r.Raw, null) { Owner = this }.ShowDialog();
             SetStatus($"Immagine salvata in {d.ImagePath} (con .md5 e .sha256).");
         }
     }
@@ -798,6 +802,31 @@ public partial class MainWindow : Window
     private async void OnExportDisk(object sender, RoutedEventArgs e)
     {
         if (_contextSource?.Source is { } s) await ExportAsync(s, RawTarget.WholeDisk(s), true);
+    }
+
+    private async void OnZeroFree(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource is not { } item) return;
+        if (!ReferenceEquals(item, _current) || _vol is not { ReadWrite: true } vol)
+        {
+            MessageBox.Show(this, "Apri questa partizione e sblocca la scrittura, poi riprova.", "Azzera lo spazio libero",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (MessageBox.Show(this,
+                "Scrivere zeri su tutto lo spazio libero?\n\n" +
+                "I dati di file già cancellati non saranno più recuperabili e le immagini esportate (soprattutto compresse) " +
+                "diventano molto più piccole. I blocchi già a zero vengono solo letti, così chiavette e SD non si consumano. " +
+                "Si può annullare in qualsiasi momento.",
+                "Azzera lo spazio libero", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            return;
+        var (ok, r) = await RunJobAsync("Azzeramento", (p, ct) =>
+            vol.ZeroFreeSpace(ct, new Progress<double>(f => p.Report(new JobProgress { Phase = "spazio libero", Done = (long)(f * 1000), Total = 1000 }))));
+        if (ok)
+        {
+            uint bs = vol.GetInfo().BlockSize;
+            SetStatus($"Spazio libero azzerato: {Format.Size(r.Zeroed * bs)} riscritti su {Format.Size(r.FreeBlocks * bs)} liberi.");
+        }
     }
 
     private async Task WriteImageAsync(Ext4Source s, RawTarget t)

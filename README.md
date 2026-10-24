@@ -48,8 +48,9 @@ Pulsante ⓘ (senza file selezionati) oppure clic destro su una partizione → *
 
 Clic destro su una partizione nell'elenco a sinistra:
 - **Calcola hash** della partizione, del disco intero o dell'immagine intera (MD5 e SHA-256 in un solo passaggio, con confronto con un hash incollato e salvataggio di `.md5`/`.sha256`).
-- **Esporta come immagine** (partizione o disco intero): l'hash viene calcolato durante la copia e accanto all'immagine vengono creati `.md5` e `.sha256` in formato `md5sum`, verificabili anche su Linux. Opzioni: file sparso (le zone a zero non occupano spazio) e rilettura di verifica.
-- **Scrivi un'immagine** sulla partizione o sul disco intero: se accanto all'immagine c'è un `.sha256`/`.md5` (o `SHA256SUMS`) viene verificata prima di scrivere; dopo la scrittura il disco viene riletto e confrontato. Il disco da cui gira Windows non è mai una destinazione ammessa, la dimensione viene controllata, le unità del disco vengono smontate e serve una conferma esplicita.
+- **Azzera lo spazio libero** (volume aperto in scrittura): scrive zeri sui blocchi liberi che non lo sono già, leggendo prima per non consumare inutilmente chiavette e SD. I dati cancellati diventano irrecuperabili e le immagini esportate, soprattutto compresse, molto più piccole.
+- **Esporta come immagine** (partizione o disco intero) in formato `.img` (anche sparso), `.img.gz`, `.img.zst`, `.img.xz` (multi-blocco, compressione parallela) o **VHD dinamico** (si apre direttamente in Windows/Hyper-V). L'hash viene calcolato durante la copia: accanto al file vengono creati `.md5`/`.sha256` in formato `md5sum` (per i formati compressi una coppia per il file e una, `disco.img.sha256`, per i dati decompressi). Opzione di rilettura di verifica.
+- **Scrivi un'immagine** sulla partizione o sul disco intero, anche direttamente da `.gz`, `.zst`, `.xz` o `.vhd` (decompressione in streaming, preceduta da un passaggio di verifica che ne ricava dimensione e hash): se accanto all'immagine c'è un `.sha256`/`.md5` (o `SHA256SUMS`) viene verificata prima di scrivere; dopo la scrittura il disco viene riletto e confrontato. Il disco da cui gira Windows non è mai una destinazione ammessa, la dimensione viene controllata, le unità del disco vengono smontate e serve una conferma esplicita.
 
 Nel menu dei file: **Calcola hash → MD5 / SHA-256** produce un elenco in formato `md5sum`/`sha256sum` (anche ricorsivo sulle cartelle), e **Verifica con un file md5sum/sha256sum** controlla i file della cartella corrente contro un elenco (selezionato nel disco ext o scelto da Windows), segnalando file diversi o mancanti.
 
@@ -146,7 +147,6 @@ third_party/       e2fsprogs (sottomodulo)
 ## Roadmap
 
 Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
-- azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
 - fsck integrato;
 - modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.

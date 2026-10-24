@@ -247,6 +247,12 @@ static int run(int argc, char **argv)
 		const char *v = argv[5];
 
 		err = e4_set_super(fs, atoi(argv[4]), _strtoui64(v, NULL, 0), v);
+	} else if (!strcmp(cmd, "zerofree")) {
+		e4_zero_stats z;
+
+		err = e4_zero_free(fs, NULL, NULL, &z);
+		printf("free=%llu zeroed=%llu\n", (unsigned long long) z.free_blocks,
+		       (unsigned long long) z.zeroed_blocks);
 	} else if (!strcmp(cmd, "trunc") && argc == 6) {
 		err = e4_lookup(fs, argv[4], &ino);
 		if (!err)

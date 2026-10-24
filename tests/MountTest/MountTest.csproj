@@ -19,5 +19,7 @@
       <HintPath>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\WinFsp\bin\winfsp-msil.dll</HintPath>
     </Reference>
     <None Include="$(NativeOut)\ext4core.dll" Link="ext4core.dll" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="Joveler.Compression.XZ" Version="5.0.2" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
 </Project>

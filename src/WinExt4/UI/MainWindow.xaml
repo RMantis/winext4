@@ -205,6 +205,8 @@
                                 <MenuItem x:Name="ScExportPartition" Header="Esporta partizione come immagine…" Click="OnExportPartition" />
                                 <MenuItem x:Name="ScExportDisk" Header="Esporta intero disco come immagine…" Click="OnExportDisk" />
                                 <Separator />
+                                <MenuItem x:Name="ScZeroFree" Header="Azzera lo spazio libero…" Click="OnZeroFree" />
+                                <Separator />
                                 <MenuItem x:Name="ScWritePartition" Header="Scrivi un'immagine sulla partizione…" Click="OnWritePartition" />
                                 <MenuItem x:Name="ScWriteDisk" Header="Scrivi un'immagine sull'intero disco…" Click="OnWriteDisk" />
                             </ContextMenu>

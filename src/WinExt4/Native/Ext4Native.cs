@@ -234,6 +234,16 @@ internal static unsafe class Ext4Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     public static extern int e4_count_inodes(IntPtr fs, int* cancel, ulong* progress, out Counts counts);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ZeroStats
+    {
+        public ulong free_blocks;
+        public ulong zeroed_blocks;
+    }
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_zero_free(IntPtr fs, int* cancel, ulong* progress, out ZeroStats stats);
+
     public const uint RawWrite = 0x1;
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]

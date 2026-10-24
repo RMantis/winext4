@@ -126,26 +126,47 @@ public static class Imaging
         return new HashResult(Hex(md5.GetHashAndReset()), Hex(sha.GetHashAndReset()), size);
     }
 
-    public static HashResult HashFile(string path, IProgress<JobProgress>? progress, CancellationToken cancel)
-    {
-        using var dev = RawDevice.Open(path, 0, 0, false);
-        return HashDevice(dev, dev.Size, "Verifica dell'immagine", progress, cancel);
-    }
+    public static HashResult HashFile(string path, IProgress<JobProgress>? progress, CancellationToken cancel) =>
+        HashImageContent(path, "Verifica dell'immagine", progress, cancel);
 
     private static string Hex(byte[] b) => Convert.ToHexString(b).ToLowerInvariant();
 
-    /// <summary>Copies a range to an image file, hashing on the way; optional sparse output and read-back check.</summary>
-    public static HashResult Export(RawTarget t, string imagePath, bool sparse, bool verify,
+    public sealed record ExportResult(HashResult Raw, string? FileMd5, string? FileSha256, long FileBytes);
+
+    /// <summary>
+    /// Copies a range to an image file in the given format, hashing the raw
+    /// data on the way (and the output file for compressed/VHD formats).
+    /// Sidecars: image.img.{md5,sha256} for raw content; for compressed
+    /// output also &lt;output&gt;.{md5,sha256} for the file itself.
+    /// </summary>
+    public static ExportResult Export(RawTarget t, string outPath, ImageFormat format, bool sparse, bool verify,
         IProgress<JobProgress>? progress, CancellationToken cancel)
     {
-        HashResult result;
+        HashResult raw;
+        string? fileMd5 = null, fileSha = null;
         using (var dev = RawDevice.Open(t.Path, t.Offset, t.Length, false))
-        using (var fs = new FileStream(imagePath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
+        using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 16))
         {
-            if (sparse) MakeSparse(fs);
             using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
             using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var state = new JobProgress { Phase = "Esportazione", Total = (long)dev.Size };
+            HashingStream? hashing = null;
+            Stream? comp = null;
+            DynamicVhdWriter? vhd = null;
+            switch (format)
+            {
+                case ImageFormat.Raw:
+                    if (sparse) MakeSparse(fs);
+                    break;
+                case ImageFormat.Vhd:
+                    MakeSparse(fs);
+                    vhd = new DynamicVhdWriter(fs, dev.Size);
+                    break;
+                default:
+                    hashing = new HashingStream(fs);
+                    comp = ImageFormats.Compressor(hashing, format);
+                    break;
+            }
             byte[] buf = ArrayPool<byte>.Shared.Rent(Chunk);
             try
             {
@@ -156,55 +177,124 @@ public static class Imaging
                     dev.Read(pos, buf.AsSpan(0, n));
                     md5.AppendData(buf, 0, n);
                     sha.AppendData(buf, 0, n);
-                    if (sparse && IsZero(buf.AsSpan(0, n)))
-                        fs.Seek(n, SeekOrigin.Current); // leave a hole
-                    else
-                        fs.Write(buf, 0, n);
+                    if (comp is not null) comp.Write(buf, 0, n);
+                    else if (vhd is not null) vhd.Write(buf.AsSpan(0, n));
+                    else if (sparse && IsZero(buf.AsSpan(0, n))) fs.Seek(n, SeekOrigin.Current); // leave a hole
+                    else fs.Write(buf, 0, n);
                     pos += (ulong)n;
                     Report(progress, state, (long)pos);
                 }
-                fs.SetLength((long)dev.Size);
+                if (format == ImageFormat.Raw) fs.SetLength((long)dev.Size);
+                comp?.Dispose();
+                vhd?.Finish();
             }
             finally
             {
                 ArrayPool<byte>.Shared.Return(buf);
             }
-            result = new HashResult(Hex(md5.GetHashAndReset()), Hex(sha.GetHashAndReset()), dev.Size);
+            raw = new HashResult(Hex(md5.GetHashAndReset()), Hex(sha.GetHashAndReset()), dev.Size);
+            if (hashing is not null) (fileMd5, fileSha) = hashing.Finish();
+        }
+        if (format == ImageFormat.Vhd)
+        {
+            var f = HashPlainFile(outPath, progress, cancel);
+            (fileMd5, fileSha) = (f.Md5, f.Sha256);
         }
         if (verify)
         {
-            var check = HashFile(imagePath, progress, cancel);
-            if (check.Sha256 != result.Sha256)
+            var check = HashImageContent(outPath, "Verifica dell'immagine", progress, cancel);
+            if (check.Sha256 != raw.Sha256)
                 throw new IOException("L'immagine scritta non corrisponde ai dati letti (hash diverso).");
         }
-        Sidecar.Write(imagePath, result);
-        return result;
+        if (format == ImageFormat.Raw)
+        {
+            Sidecar.Write(outPath, raw);
+        }
+        else
+        {
+            Sidecar.Write(outPath, new HashResult(fileMd5!, fileSha!, (ulong)new FileInfo(outPath).Length));
+            Sidecar.Write(Sidecar.RawName(outPath), raw);
+        }
+        return new ExportResult(raw, fileMd5, fileSha, new FileInfo(outPath).Length);
+    }
+
+    /// <summary>Hash of a file's bytes as stored (no decompression).</summary>
+    public static HashResult HashPlainFile(string path, IProgress<JobProgress>? progress, CancellationToken cancel)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20);
+        return HashStream(fs, fs.Length, "Calcolo hash del file", progress, cancel);
+    }
+
+    /// <summary>Hash of the raw disk content of an image (decompressing gz/zst/xz/vhd).</summary>
+    public static HashResult HashImageContent(string path, string phase, IProgress<JobProgress>? progress, CancellationToken cancel)
+    {
+        using var s = ImageFormats.OpenRead(path, out _, out long? len);
+        return HashStream(s, len ?? new FileInfo(path).Length, phase, progress, cancel);
+    }
+
+    private static HashResult HashStream(Stream s, long expected, string phase, IProgress<JobProgress>? progress, CancellationToken cancel)
+    {
+        using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var state = new JobProgress { Phase = phase, Total = expected };
+        byte[] buf = ArrayPool<byte>.Shared.Rent(Chunk);
+        long total = 0;
+        try
+        {
+            int n;
+            while ((n = s.Read(buf, 0, Chunk)) > 0)
+            {
+                cancel.ThrowIfCancellationRequested();
+                md5.AppendData(buf, 0, n);
+                sha.AppendData(buf, 0, n);
+                total += n;
+                if (total > state.Total) state.Total = total;
+                Report(progress, state, total);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buf);
+        }
+        return new HashResult(Hex(md5.GetHashAndReset()), Hex(sha.GetHashAndReset()), (ulong)total);
     }
 
     public sealed record WriteOutcome(HashResult Image, HashResult? Readback, string? ExpectedFromSidecar);
 
     /// <summary>
-    /// Writes an image over a whole disk or a partition. The image hash is
-    /// computed while writing and compared with <paramref name="expected"/>
-    /// (from a .md5/.sha256 file) and, if requested, with a read-back of the target.
+    /// Writes an image (raw, gz, zst, xz or VHD) over a whole disk or a
+    /// partition. Compressed images get a verification pass first, which also
+    /// gives their size, so nothing is written when the image is too big or
+    /// does not match its .md5/.sha256. After writing the target is read back.
     /// </summary>
     public static WriteOutcome WriteImage(string imagePath, RawTarget target, Sidecar.Entry? expected, bool preVerify,
         bool readback, IProgress<JobProgress>? progress, CancellationToken cancel)
     {
-        ulong imageSize = (ulong)new FileInfo(imagePath).Length;
+        var format = ImageFormats.Detect(imagePath);
+        ulong imageSize;
+        if (format == ImageFormat.Raw)
+        {
+            imageSize = (ulong)new FileInfo(imagePath).Length;
+            if (expected is not null && preVerify && !expected.Matches(HashPlainFile(imagePath, progress, cancel), null))
+                throw new IOException($"L'immagine non corrisponde al file {expected.Algorithm.ToUpperInvariant()} ({expected.File}): non è stato scritto niente.");
+        }
+        else
+        {
+            var content = HashImageContent(imagePath, "Verifica dell'immagine compressa", progress, cancel);
+            imageSize = content.Bytes;
+            if (expected is not null)
+            {
+                var file = expected.AppliesToRaw ? null : HashPlainFile(imagePath, progress, cancel);
+                if (!expected.Matches(file, content))
+                    throw new IOException($"L'immagine non corrisponde al file {expected.Algorithm.ToUpperInvariant()} ({expected.File}): non è stato scritto niente.");
+            }
+        }
         if (target.Length > 0 && imageSize > target.Length)
             throw new IOException($"L'immagine ({Format.Size(imageSize)}) è più grande della destinazione ({Format.Size(target.Length)}).");
 
-        if (expected is not null && preVerify)
-        {
-            var pre = HashFile(imagePath, progress, cancel);
-            if (!expected.Matches(pre))
-                throw new IOException($"L'immagine non corrisponde al file {expected.Algorithm.ToUpperInvariant()} ({expected.File}): non è stato scritto niente.");
-        }
-
         HashResult written;
         using (var dev = RawDevice.Open(target.Path, target.Offset, target.Length, true))
-        using (var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16))
+        using (var input = ImageFormats.OpenRead(imagePath, out _, out _))
         {
             if (imageSize > dev.Size)
                 throw new IOException($"L'immagine ({Format.Size(imageSize)}) è più grande della destinazione ({Format.Size(dev.Size)}).");
@@ -214,14 +304,16 @@ public static class Imaging
             byte[] buf = ArrayPool<byte>.Shared.Rent(Chunk);
             try
             {
-                for (ulong pos = 0; pos < imageSize;)
+                ulong pos = 0;
+                while (pos < imageSize)
                 {
                     cancel.ThrowIfCancellationRequested();
-                    int n = fs.Read(buf, 0, (int)Math.Min((ulong)Chunk, imageSize - pos));
-                    if (n <= 0) throw new IOException("Lettura dell'immagine interrotta.");
+                    // fill whole chunks so writes stay large and sector aligned
+                    int n = 0, want = (int)Math.Min((ulong)Chunk, imageSize - pos), r;
+                    while (n < want && (r = input.Read(buf, n, want - n)) > 0) n += r;
+                    if (n == 0) throw new IOException("Lettura dell'immagine interrotta.");
                     md5.AppendData(buf, 0, n);
                     sha.AppendData(buf, 0, n);
-                    // keep writes sector aligned: only the last chunk may be short
                     dev.Write(pos, buf.AsSpan(0, n));
                     pos += (ulong)n;
                     Report(progress, state, (long)pos);
@@ -241,7 +333,7 @@ public static class Imaging
                 if (back.Sha256 != written.Sha256)
                     throw new IOException("La rilettura del disco non corrisponde all'immagine: la scrittura potrebbe essere fallita o il dispositivo è difettoso.");
             }
-            if (expected is not null && !expected.Matches(written))
+            if (format == ImageFormat.Raw && expected is not null && !expected.Matches(written, null))
                 throw new IOException($"L'immagine scritta non corrisponde al file {expected.Algorithm.ToUpperInvariant()} ({expected.File}).");
             return new WriteOutcome(written, back, expected?.File);
         }
@@ -279,11 +371,35 @@ public static class Imaging
 /// <summary>md5sum/sha256sum style sidecar files ("hash *name").</summary>
 public static class Sidecar
 {
-    public sealed record Entry(string Algorithm, string Hash, string File)
+    /// <param name="AppliesToRaw">
+    /// The hash is of the decompressed content (a "disk.img.sha256" next to
+    /// "disk.img.gz"), not of the file itself.
+    /// </param>
+    public sealed record Entry(string Algorithm, string Hash, string File, bool AppliesToRaw = false)
     {
-        public bool Matches(HashResult r) => Algorithm == "md5"
+        private bool Eq(HashResult? r) => r is not null && (Algorithm == "md5"
             ? string.Equals(Hash, r.Md5, StringComparison.OrdinalIgnoreCase)
-            : string.Equals(Hash, r.Sha256, StringComparison.OrdinalIgnoreCase);
+            : string.Equals(Hash, r.Sha256, StringComparison.OrdinalIgnoreCase));
+
+        /// <param name="file">Hash of the file as stored.</param>
+        /// <param name="content">Hash of the decompressed content (null for raw images: same as file).</param>
+        public bool Matches(HashResult? file, HashResult? content) =>
+            AppliesToRaw ? Eq(content ?? file) : Eq(file);
+    }
+
+    public static readonly string[] CompressedExtensions = { ".gz", ".zst", ".xz", ".vhd" };
+
+    /// <summary>"disk.img.gz" → "disk.img"; "disk.vhd" → "disk.img".</summary>
+    public static string RawName(string path)
+    {
+        string ext = Path.GetExtension(path).ToLowerInvariant();
+        if (ext == ".vhd") return Path.ChangeExtension(path, ".img");
+        if (CompressedExtensions.Contains(ext))
+        {
+            string inner = path[..^ext.Length];
+            return Path.GetExtension(inner).Length > 0 ? inner : inner + ".img";
+        }
+        return path;
     }
 
     public static void Write(string imagePath, HashResult r)
@@ -293,23 +409,41 @@ public static class Sidecar
         File.WriteAllText(imagePath + ".sha256", $"{r.Sha256} *{name}\n");
     }
 
-    /// <summary>Finds image.img.sha256 / image.sha256 / .md5 next to the image (SHA-256 preferred).</summary>
+    /// <summary>
+    /// Finds a hash for the image: image.sha256 / image.md5 / SHA256SUMS…, also
+    /// one written for the decompressed content (disk.img.sha256 next to disk.img.gz).
+    /// SHA-256 is preferred.
+    /// </summary>
     public static Entry? Find(string imagePath)
     {
         string name = Path.GetFileName(imagePath);
-        string noExt = Path.ChangeExtension(imagePath, null);
+        string rawPath = RawName(imagePath);
+        string rawName = Path.GetFileName(rawPath);
+        string dir = Path.GetDirectoryName(imagePath)!;
         foreach (var (algo, ext, len) in new[] { ("sha256", ".sha256", 64), ("md5", ".md5", 32) })
-            foreach (var candidate in new[] { imagePath + ext, noExt + ext, imagePath + ext + "sum", Path.Combine(Path.GetDirectoryName(imagePath)!, algo.ToUpperInvariant() + "SUMS") })
+        {
+            var candidates = new[]
+            {
+                imagePath + ext, Path.ChangeExtension(imagePath, null) + ext, imagePath + ext + "sum",
+                rawPath + ext, Path.Combine(dir, algo.ToUpperInvariant() + "SUMS"),
+            }.Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in candidates)
             {
                 if (!File.Exists(candidate)) continue;
                 foreach (var line in File.ReadLines(candidate))
                 {
                     var (hash, file) = ParseLine(line);
                     if (hash is null || hash.Length != len) continue;
-                    if (file is null || string.Equals(Path.GetFileName(file), name, StringComparison.OrdinalIgnoreCase))
+                    string? f = file is null ? null : Path.GetFileName(file);
+                    if (f is null && candidate.Equals(rawPath + ext, StringComparison.OrdinalIgnoreCase) && rawPath != imagePath)
+                        return new Entry(algo, hash, Path.GetFileName(candidate), AppliesToRaw: true);
+                    if (f is null || string.Equals(f, name, StringComparison.OrdinalIgnoreCase))
                         return new Entry(algo, hash, Path.GetFileName(candidate));
+                    if (rawPath != imagePath && string.Equals(f, rawName, StringComparison.OrdinalIgnoreCase))
+                        return new Entry(algo, hash, Path.GetFileName(candidate), AppliesToRaw: true);
                 }
             }
+        }
         return null;
     }
 

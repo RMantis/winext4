@@ -169,6 +169,19 @@ typedef struct e4_counts {
 E4_API int e4_count_inodes(e4_fs *fs, volatile int32_t *cancel, volatile uint64_t *progress,
 			   e4_counts *out);
 
+typedef struct e4_zero_stats {
+	uint64_t free_blocks;   /* free blocks examined */
+	uint64_t zeroed_blocks; /* blocks that were not zero and got overwritten */
+} e4_zero_stats;
+
+/*
+ * Writes zeros over every free block that is not already zero (read first,
+ * so flash media is not worn needlessly). Needs read-write. *progress counts
+ * examined free blocks; *cancel stops between chunks.
+ */
+E4_API int e4_zero_free(e4_fs *fs, volatile int32_t *cancel, volatile uint64_t *progress,
+			e4_zero_stats *out);
+
 /* ---- lookup / metadata ---- */
 E4_API int e4_lookup(e4_fs *fs, const char *path, uint32_t *ino);
 E4_API int e4_lookup_child(e4_fs *fs, uint32_t dir, const char *name,

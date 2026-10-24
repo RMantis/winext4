@@ -6,7 +6,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 |---|---|---|---|
 | 1 | ✅ Hash e verifica (immagini, dischi, file) | — | piccola |
 | 2 | ✅ Controllo GUID delle partizioni | — | piccola |
-| 3 | Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
+| 3 | ✅ Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
 | 4 | Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
 | 5 | fsck integrato | — | media |
 | 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
@@ -79,7 +79,9 @@ I punti 7, 8 e 9 sono miglioramenti dell'interfaccia indipendenti dagli altri: s
 
 ---
 
-## 3. Azzeramento dello spazio libero ed export compresso
+## 3. ✅ Azzeramento dello spazio libero ed export compresso
+
+*Implementato:* azzeramento con lettura preventiva, export in `.img` sparso / `.img.gz` / `.img.zst` (con checksum) / `.img.xz` (multi-blocco) / VHD dinamico, doppio hash (file e contenuto), scrittura su disco direttamente da file compressi o VHD. Al posto del VHDX c'è il VHD dinamico (formato più semplice, apribile da Windows). Restano da fare: TRIM/discard dei blocchi liberi, azzeramento delle zone non partizionate, export «solo blocchi usati» e azzeramento nell'overlay.
 
 ### Azzeramento dello spazio libero
 

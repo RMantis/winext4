@@ -410,6 +410,28 @@ public sealed unsafe class Ext4Volume : IDisposable
         }
     }
 
+    /// <summary>Zeros free blocks that are not already zero; returns (free blocks examined, blocks written).</summary>
+    public (ulong FreeBlocks, ulong Zeroed) ZeroFreeSpace(CancellationToken cancel, IProgress<double>? progress = null)
+    {
+        IntPtr mem = (IntPtr)NativeMemory.AllocZeroed(16);
+        try
+        {
+            var info = GetInfo();
+            ulong total = info.FreeBytes / Math.Max(1u, info.BlockSize) + info.ReservedBytes / Math.Max(1u, info.BlockSize);
+            using var reg = cancel.Register(() => Marshal.WriteInt32(mem, 1));
+            using var timer = progress is null ? null
+                : new Timer(_ => progress.Report(total > 0 ? Math.Min(1.0, (double)Marshal.ReadInt64(mem, 8) / total) : 0), null, 300, 300);
+            int err = Ext4Native.e4_zero_free(Fs, (int*)mem, (ulong*)(mem + 8), out var z);
+            cancel.ThrowIfCancellationRequested();
+            Ext4Exception.Check(err, "Azzeramento dello spazio libero");
+            return (z.free_blocks, z.zeroed_blocks);
+        }
+        finally
+        {
+            NativeMemory.Free((void*)mem);
+        }
+    }
+
     public static string Version
     {
         get

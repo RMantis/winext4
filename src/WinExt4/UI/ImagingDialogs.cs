@@ -104,10 +104,12 @@ public sealed class ExportImageDialog : SimpleDialog
 {
     private readonly TextBox _path;
     private readonly CheckBox _sparse, _verify;
+    private readonly ComboBox _format;
 
     public string ImagePath => _path.Text.Trim();
     public bool Sparse => _sparse.IsChecked == true;
     public bool Verify => _verify.IsChecked == true;
+    public ImageFormat SelectedFormat => (ImageFormat)_format.SelectedIndex;
 
     public ExportImageDialog(RawTarget t, ulong size, string defaultName) : base("Esporta come immagine", 600)
     {
@@ -130,13 +132,29 @@ public sealed class ExportImageDialog : SimpleDialog
         row.Children.Add(browse);
         row.Children.Add(_path);
         Body.Children.Add(row);
+        Body.Children.Add(DialogUi.Label("Formato:"));
+        _format = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
+        foreach (ImageFormat f in Enum.GetValues<ImageFormat>()) _format.Items.Add(ImageFormats.Description(f));
+        _format.SelectedIndex = 0;
+        _format.SelectionChanged += (_, _) =>
+        {
+            // swap the extension to match the format
+            string p = _path.Text.Trim();
+            foreach (var ext in new[] { ".img.gz", ".img.zst", ".img.xz", ".vhd", ".img" })
+                if (p.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) { p = p[..^ext.Length]; break; }
+            _path.Text = p + ImageFormats.Extension(SelectedFormat);
+            _sparse!.IsEnabled = SelectedFormat == ImageFormat.Raw;
+        };
+        Body.Children.Add(_format);
         _sparse = new CheckBox { Content = DialogUi.Label("File sparso: le zone a zero non occupano spazio su NTFS"), IsChecked = true, Margin = new Thickness(0, 8, 0, 2) };
         _verify = new CheckBox { Content = DialogUi.Label("Verifica rileggendo l'immagine dopo averla scritta (più lento)"), Margin = new Thickness(0, 2, 0, 2) };
         Body.Children.Add(_sparse);
         Body.Children.Add(_verify);
         Body.Children.Add(new TextBlock
         {
-            Text = "Accanto all'immagine vengono creati i file .md5 e .sha256 (formato md5sum/sha256sum, verificabili anche su Linux).",
+            Text = "Accanto all'immagine vengono creati i file .md5 e .sha256 (formato md5sum/sha256sum, verificabili anche su Linux). " +
+                   "Per i formati compressi ce ne sono due coppie: una per il file compresso e una (disco.img.sha256) per i dati decompressi. " +
+                   "Suggerimento: «Azzera lo spazio libero» prima dell'esportazione rende le immagini compresse molto più piccole.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = DialogUi.Muted,
             Margin = new Thickness(0, 8, 0, 0),
@@ -182,7 +200,7 @@ public sealed class WriteImageDialog : SimpleDialog
         _path = new TextBox { Padding = new Thickness(4, 2, 4, 2) };
         browse.Click += (_, _) =>
         {
-            var d = new OpenFileDialog { Filter = "Immagini disco (*.img;*.raw;*.bin;*.dd;*.iso)|*.img;*.raw;*.bin;*.dd;*.iso|Tutti i file|*.*" };
+            var d = new OpenFileDialog { Filter = "Immagini disco (*.img;*.raw;*.bin;*.dd;*.iso;*.gz;*.zst;*.xz;*.vhd)|*.img;*.raw;*.bin;*.dd;*.iso;*.gz;*.zst;*.xz;*.vhd|Tutti i file|*.*" };
             if (d.ShowDialog(this) == true) _path.Text = d.FileName;
         };
         _path.TextChanged += (_, _) => Evaluate();
@@ -216,7 +234,16 @@ public sealed class WriteImageDialog : SimpleDialog
             ok = false;
         }
         Expected = null;
-        if (File.Exists(ImagePath))
+        if (File.Exists(ImagePath) && ImageFormats.Detect(ImagePath) is var fmt && fmt != ImageFormat.Raw)
+        {
+            lines.Add($"• Immagine {ImageFormats.Description(fmt).Split(' ')[0]}: prima di scrivere viene decompressa una volta per verificarne dimensione" +
+                      " e hash; se non entra nella destinazione non viene scritto niente.");
+            Expected = Sidecar.Find(ImagePath);
+            lines.Add(Expected is null
+                ? "• Nessun file .md5/.sha256 trovato."
+                : $"✔ Trovato {Expected.File} ({(Expected.AppliesToRaw ? "dati decompressi" : "file compresso")}): verrà verificato.");
+        }
+        else if (File.Exists(ImagePath))
         {
             ulong size = (ulong)new FileInfo(ImagePath).Length;
             if (_target.Length > 0 && size > _target.Length)
