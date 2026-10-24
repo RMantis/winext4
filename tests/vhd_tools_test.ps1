@@ -1,6 +1,8 @@
 <#
-  Real-disk test (elevated) for partition tools, hashing/imaging and
-  superblock editing, on an attached VHD. Log: tests\work\vhd-tools.log
+  Real-disk test (elevated) for partition tools, hashing/imaging,
+  superblock editing, drafts and fsck, on an attached VHD.
+  Needs tests\work\broken.img (tests/make_fsck_images.sh).
+  Log: tests\work\vhd-tools.log
 #>
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot
@@ -8,6 +10,7 @@ $work = Join-Path $root 'tests\work'
 Start-Transcript (Join-Path $work 'vhd-tools.log') -Force | Out-Null
 $bin = Join-Path $root 'src\WinExt4\bin\Debug\net8.0-windows\win-x64'
 $cli = Join-Path $root 'native\build\Release\e4cli.exe'
+$fsck = Join-Path $root 'native\build\Release\e4fsck.exe'
 $env:PATH = "$bin;$env:PATH"
 Add-Type -Path (Join-Path $bin 'WinExt4.dll')
 $none = [Threading.CancellationToken]::None
@@ -43,11 +46,42 @@ try {
     $h = [WinExt4.Core.Imaging]::Hash($part, $null, $none)
     $out = Join-Path $work 'vhd-p1.img'
     Remove-Item "$out*" -ErrorAction SilentlyContinue
-    $e = [WinExt4.Core.Imaging]::Export($part, $out, $true, $true, $null, $none)
+    $e = [WinExt4.Core.Imaging]::Export($part, $out, [WinExt4.Core.ImageFormat]::Raw, $true, $true, $null, $none).Raw
     Check ($e.Sha256 -eq $h.Sha256 -and (Test-Path "$out.sha256")) "export of the disk partition (sha256 $($h.Sha256.Substring(0,16))…)"
     $whole = [WinExt4.Core.RawTarget]::WholeDisk($s)
     $hw = [WinExt4.Core.Imaging]::Hash($whole, $null, $none)
     Check ($hw.Bytes -eq $disk.Size) "whole-disk hash covers $($hw.Bytes) bytes"
+
+    "== draft on the raw partition"
+    $delta = Join-Path $work 'vhd.wx4draft'
+    Remove-Item $delta -ErrorAction SilentlyContinue
+    $v = [WinExt4.Core.Ext4Volume]::OpenDraft($s, $delta, [WinExt4.Core.Drafts]::Describe($s))
+    [void]$v.CreateDirectory([uint32]2, [WinExt4.Core.Ext4Volume]::Encode('da-bozza'), 0x41ed, 0, 0)
+    $v.Dispose()
+    Check (([WinExt4.Core.Imaging]::Hash($part, $null, $none)).Sha256 -eq $h.Sha256) 'partition unchanged while editing the draft'
+    Check ([WinExt4.Core.Drafts]::Matches($delta, $s)) 'draft matches the disk partition'
+    [WinExt4.Core.Drafts]::Apply($delta, $s, $null, $none)
+    $v = [WinExt4.Core.Ext4Volume]::Open($s, $false)
+    $x = [uint32]0
+    Check ($v.TryLookup('/da-bozza', [ref]$x)) 'draft applied to the disk (partition locked while writing)'
+    $v.Dispose()
+    & $fsck -fn $s.Device | Out-Null
+    Check ($LASTEXITCODE -eq 0) 'e4fsck: clean after applying the draft'
+
+    "== fsck on the raw partition"
+    $broken = Join-Path $work 'broken.img'
+    [void][WinExt4.Core.Imaging]::WriteImage($broken, $part, $null, $false, $true, $null, $none)
+    & $fsck -fn $s.Device | Out-Null
+    Check ($LASTEXITCODE -eq 4) "damaged partition: errors found (exit $LASTEXITCODE)"
+    & $fsck -fy --draft (Join-Path $work 'vhd-fsck.wx4draft') $s.Device | Out-Null
+    Check ($LASTEXITCODE -eq 1) "repaired into a draft (exit $LASTEXITCODE)"
+    & $fsck -fn $s.Device | Out-Null
+    Check ($LASTEXITCODE -eq 4) 'partition still untouched'
+    & $fsck -fy $s.Device | Out-Null
+    Check ($LASTEXITCODE -eq 1) "repaired in place, volume locked (exit $LASTEXITCODE)"
+    & $fsck -fn $s.Device | Out-Null
+    Check ($LASTEXITCODE -eq 0) 'clean after the repair'
+    Remove-Item (Join-Path $work 'vhd-fsck.wx4draft') -ErrorAction SilentlyContinue
 
     "== write an MBR disk image over the whole disk (all volumes locked)"
     $src = Join-Path $work 'vhd-write-src.img'
