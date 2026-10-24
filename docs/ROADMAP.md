@@ -7,8 +7,13 @@ Idee in ordine di priorità suggerita. L'ordine segue il rapporto tra rischio e 
 | 1 | Hash e verifica (immagini, dischi, file) | — | piccola |
 | 2 | Controllo GUID delle partizioni | — | piccola |
 | 3 | Azzeramento dello spazio libero ed export compresso | 1 per l'hash durante l'export | media |
-| 4 | fsck integrato | — | media |
-| 5 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 4 è utile | grande |
+| 4 | Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
+| 5 | fsck integrato | — | media |
+| 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
+| 7 | «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
+| 8 | Anteprima di testo e immagini nella finestra | — | piccola |
+
+I punti 7 e 8 sono miglioramenti dell'interfaccia indipendenti dagli altri: si possono fare in qualsiasi momento, anche per primi.
 
 ---
 
@@ -83,7 +88,7 @@ Come funziona:
 - **Lavoro su intervalli.** Si parte dalle zone libere contigue della bitmap (`ext2fs_find_first_set_block_bitmap2`) e le si elabora a blocchi grandi, per esempio da 4 MB.
 - **Sicurezza.** Va fatto con il volume bloccato in scrittura. Si escludono i blocchi del journal, che sono allocati e quindi già esclusi, e i blocchi riservati. È annullabile in qualsiasi momento, perché ogni blocco azzerato era comunque libero.
 - **Partizioni intere.** Opzionalmente si azzerano anche lo spazio non partizionato e le aree tra le partizioni, quando si esporta l'intero disco.
-- **Modalità «bozza».** Insieme al punto 5 l'azzeramento può stare nell'overlay: utile per esportare un'immagine compatta senza toccare il disco originale.
+- **Modalità «bozza».** Insieme al punto 6 l'azzeramento può stare nell'overlay: utile per esportare un'immagine compatta senza toccare il disco originale.
 
 ### Export compresso (disco o immagine)
 
@@ -102,7 +107,56 @@ Come funziona:
 
 ---
 
-## 4. fsck
+## 4. Aprire immagini dentro archivi senza estrarle
+
+### Obiettivo
+
+Aprire direttamente `backup.tar.gz` o `raspios.img.xz` e sfogliare, estrarre o montare il filesystem ext che contiene, **senza prima decomprimere** gigabyte su disco.
+
+### Formati
+
+| Formato | Accesso casuale | Note |
+|---|---|---|
+| `.tar` | diretto | Il membro `.img` è un intervallo contiguo dentro il tar: basta un offset. È il caso più semplice. |
+| `.img.gz`, `.tar.gz`, `.tgz` | con indice | gzip è un flusso unico: serve l'indice di punti di ripresa descritto sotto. |
+| `.img.zst`, `.tar.zst` | diretto se *seekable*, altrimenti indice | Il formato zstd *seekable* ha già una tabella dei frame; un `.zst` normale si tratta come gzip. |
+| `.img.xz`, `.tar.xz` | per blocchi | xz ha un indice dei blocchi. Il file è veloce se è stato creato multi-blocco (`xz -T0`), lento se è un blocco unico. |
+| `.zip` | per singolo membro | I membri «stored» hanno accesso diretto; quelli deflate si trattano come gzip, indicizzando solo quel membro. |
+| `.bz2`, `.7z` | — | Esclusi per ora: lenti o complessi da indicizzare. |
+
+### Come funziona l'accesso casuale
+
+1. **Primo passaggio**:
+   - decomprime tutto il flusso una volta, con progresso e annullamento, senza scrivere niente su disco;
+   - nel frattempo trova i membri del tar. Basta leggere gli header ogni 512 byte, gestendo i nomi lunghi GNU/PAX e i membri sparsi GNU;
+   - controlla quali membri contengono un filesystem ext o una tabella delle partizioni.
+2. **Indice dei punti di ripresa**, la tecnica di `zran.c` di zlib e di `indexed_gzip`:
+   - ogni ~1–4 MB di dati decompressi salva la posizione nel file compresso, la posizione decompressa, i bit residui e gli ultimi 32 KB decompressi, che sono il dizionario di deflate;
+   - per leggere all'offset X si riparte dal punto precedente più vicino, con `inflateSetDictionary`, e si decomprime al massimo un intervallo.
+3. **Cache su disco dell'indice**:
+   - si salva in `%LOCALAPPDATA%\WinExt4\index\`, con chiave dimensione + data + hash dei primi e degli ultimi MB dell'archivio;
+   - le aperture successive sono immediate;
+   - pesa circa 32 KB per punto: per esempio ~8 MB per un'immagine da 1 GB con un punto ogni 4 MB.
+4. **Cache in memoria** dei blocchi decompressi recenti (LRU, qualche decina di MB). libext2fs legge molti metadati vicini tra loro, e la cache a blocchi esistente in `winio.c` assorbe il resto.
+
+### Implementazione
+
+- **Nuovo tipo di sorgente** in `winio.c`, accanto a «file» e «volume»: `w4_dev` con `pread` che passa dall'indice. Il resto di ext4core non cambia, perché vede un normale dispositivo a blocchi.
+- **Librerie**:
+  - zlib o miniz per deflate, che serve un'API a basso livello per gestire il dizionario;
+  - zstd e liblzma, le stesse del punto 3.
+- **Scansione**: `e4_enum_image` riconosce l'archivio dai magic number (non dall'estensione) e, come oggi, restituisce una sorgente per ogni filesystem trovato in ogni membro. Per esempio `backup.tar.gz → sd-card.img → partizione 2`.
+- **Sola lettura per natura**: la scrittura dentro un archivio passa dall'overlay del punto 6. Le modifiche vanno nel delta e alla fine si **esporta** una nuova immagine, eventualmente già compressa (punto 3). Senza overlay, «Sblocca scrittura» resta disattivato con una spiegazione.
+- **Hash**: il primo passaggio può calcolare gratis l'hash del membro decompresso (punto 1), da confrontare con un eventuale `.md5` accanto all'archivio.
+
+### Limiti da comunicare
+
+- **Primo accesso**: richiede un passaggio completo di decompressione, circa quanto `gunzip` sullo stesso file, ma senza consumare spazio su disco.
+- **gzip e xz a blocco unico**: le letture sparse sono più lente che su un `.img` normale. Per un uso intensivo, come il montaggio con molte letture casuali, va proposto «Estrai come .img».
+
+---
+
+## 5. fsck
 
 ### Obiettivo
 
@@ -129,7 +183,7 @@ Controllare e riparare il filesystem da Windows, senza passare da Linux. Oggi un
   - superamento del numero massimo di montaggi o dell'intervallo di controllo.
 
   Dopo una riparazione riuscita la scrittura torna disponibile.
-- **Insieme all'overlay (punto 5)**: eseguire la riparazione **nell'overlay**, mostrare cosa cambierebbe e applicarla solo su conferma. È un «fsck con anteprima», che i tool di Linux non offrono.
+- **Insieme all'overlay (punto 6)**: eseguire la riparazione **nell'overlay**, mostrare cosa cambierebbe e applicarla solo su conferma. È un «fsck con anteprima», che i tool di Linux non offrono.
 
 ### Ripiego temporaneo
 
@@ -137,7 +191,7 @@ Per le **immagini**, se WSL è installato, si può lanciare `e2fsck` di WSL sul 
 
 ---
 
-## 5. Modifiche in sospeso (overlay / «bozza»)
+## 6. Modifiche in sospeso (overlay / «bozza»)
 
 ### Obiettivo
 
@@ -186,7 +240,7 @@ log      record append-only con checksum, uno per ogni "checkpoint"
 1. Verificare che la sorgente **non sia cambiata** dall'apertura, confrontando l'impronta. Se è cambiata, rifiutare e offrire l'esportazione come nuova immagine.
 2. Bloccare il volume e scrivere i blocchi del delta nell'ordine del log.
 3. Ricopiare un blocco con contenuto assoluto è **idempotente**: se il merge si interrompe (crash, USB staccata), alla riapertura riprende da capo e il risultato è lo stesso. Il delta va eliminato solo dopo il flush e la rilettura di verifica.
-4. Opzionale: hash prima e dopo (punto 1), ed `e2fsck -n` sul risultato (punto 4).
+4. Opzionale: hash prima e dopo (punto 1), ed `e2fsck -n` sul risultato (punto 5).
 
 ### Esporta immagine
 
@@ -207,9 +261,74 @@ Sorgente + delta → nuovo `.img`, con il `.md5` del punto 1. La sorgente resta 
 
 ---
 
+## 7. «Apri con…»
+
+### Dentro WinExt4: aprire un file ext con un programma a scelta
+
+- **Menu contestuale.** Si aggiunge **«Apri con…»** accanto ad «Apri». Il file viene copiato in una cartella temporanea, come fa già il doppio clic. Poi si mostra la finestra standard di Windows per scegliere il programma (`SHOpenWithDialog`), con l'opzione «usa sempre questa app» lasciata a Windows.
+- **Sottomenu rapido.** Elenca i programmi registrati per quell'estensione (`SHAssocEnumHandlers`), con le loro icone, come fa Esplora risorse.
+- **Riportare le modifiche nel disco ext.** Oggi la copia temporanea è in sola lettura. Con il volume aperto in scrittura (o in modalità bozza, punto 6) si può:
+  - aprire la copia modificabile;
+  - osservarla con `FileSystemWatcher`;
+  - quando il programma la salva, mostrare «*foto.jpg è stato modificato: aggiornarlo nel disco ext?*» con le scelte Aggiorna / Ignora / Aggiorna sempre per questa sessione.
+
+  Va scritto con lo stesso percorso di «Importa», che conserva proprietario e permessi del file originale. Se nel frattempo il file sul disco ext è cambiato (mtime diverso), bisogna avvisare.
+- **Pulizia.** Le cartelle temporanee vanno eliminate alla chiusura del volume. Se un file modificato non è stato riportato, prima si chiede conferma.
+- **Più file insieme.** «Apri» o «Apri con» su più file selezionati, per esempio più immagini in un visualizzatore.
+
+### In Windows: WinExt4 nel menu «Apri con» di Esplora risorse
+
+- **Registrazione per utente** (`HKCU\Software\Classes`, niente privilegi di amministratore):
+  - `Applications\WinExt4.exe` con `SupportedTypes`;
+  - `OpenWithProgids` per `.img`, `.raw`, `.bin`, `.dd`, `.ext2/3/4`, `.vhd`, e per gli archivi del punto 4 (`.img.gz`, `.img.xz`, `.tar.gz`…).
+
+  Così WinExt4 compare in «Apri con» senza togliere a nessuno l'associazione predefinita.
+- **Voce di menu sui file immagine.** Opzionale: «Apri con WinExt4» nel menu contestuale classico, tramite un verbo `shell\OpenWithWinExt4`.
+- **Dove attivarla**: una casella nelle Impostazioni, e nell'installer citato in «Altre idee».
+- **Già pronto**: la seconda istanza passa già il file a quella in esecuzione (anche a quella in background), quindi l'apertura da Esplora risorse non avvia un secondo processo.
+
+---
+
+## 8. Anteprima di file di testo e immagini
+
+### Obiettivo
+
+Vedere al volo il contenuto dei file selezionati, senza estrarli né aprire altri programmi. L'anteprima è sempre in sola lettura e non modifica niente, quindi è utile anche per controllare una chiavetta prima di sbloccare la scrittura.
+
+### Interfaccia
+
+- **Pannello laterale** a destra della lista, attivabile con un pulsante o con Alt+P come in Esplora risorse. Mostra l'anteprima del file selezionato.
+- **Barra spaziatrice** per un'anteprima a tutto schermo (stile «Quick Look»). Con ← → si passa al file precedente o successivo della cartella.
+
+### Tipi supportati
+
+- **Testo**:
+  - `.txt`, `.log`, `.conf`, `.cfg`, `.ini`, `.sh`, `.py`, `.json`, `.xml`, `.yaml`, `.md`, `.service`, `.desktop`, file di `/etc` senza estensione…;
+  - per i file senza estensione decide il contenuto: è testo se non ci sono byte NUL nei primi KB e l'UTF-8 è valido;
+  - codifica UTF-8, con ripiego su Latin-1, e fine riga LF o CRLF;
+  - carattere monospazio e a capo automatico disattivabile;
+  - lettura limitata ai primi 1–2 MB, con l'avviso «file troncato, mostrati i primi 2 MB».
+- **Immagini**: PNG, JPEG, GIF (primo fotogramma), BMP, TIFF, ICO tramite i decoder di WPF; WebP, HEIC e AVIF se Windows ha i relativi codec WIC. Il comportamento previsto:
+  - adattamento alla finestra e zoom;
+  - dimensioni in pixel;
+  - decodifica ridotta alla dimensione del pannello (`DecodePixelWidth`) per non caricare in memoria foto enormi.
+- **Altri file**:
+  - vista **esadecimale** dei primi KB;
+  - riconoscimento del tipo dal contenuto (magic number: ELF, gzip, zip, PDF, SQLite…);
+  - per i link simbolici, la destinazione e l'anteprima del file a cui puntano.
+- **Successivamente**: PDF e documenti tramite i *preview handler* di Windows (`IPreviewHandler`), gli stessi del riquadro di anteprima di Esplora risorse.
+
+### Implementazione
+
+- **Lettura senza file temporanei.** I dati si leggono direttamente con `Ext4Volume.Read`, solo la parte necessaria: per il testo i primi MB, per le immagini il file intero ma con un limite, per esempio 50 MB.
+- **Interfaccia reattiva.** La lettura avviene in background e viene annullata se la selezione cambia, così scorrere velocemente la lista resta fluido.
+- **Unità montata.** Per i file aperti dall'unità di Windows il riquadro di anteprima di Esplora risorse funziona già. Il punto 8 serve per la finestra di WinExt4, che lavora anche senza WinFsp e in sola lettura.
+
+---
+
 ## Altre idee
 
 - Pulsante «Espelli» che chiude il volume e richiede la rimozione sicura del dispositivo (`CM_Request_Device_Eject`).
 - Test su dischi con settori fisici da 4K (4Kn) e su schede SD reali.
-- Installer firmato, con associazione dei file `.img` e opzione per installare WinFsp.
+- Installer firmato, con registrazione in «Apri con» (punto 7) e opzione per installare WinFsp.
 - Modifica degli attributi estesi e delle ACL POSIX dalla finestra Proprietà.

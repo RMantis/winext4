@@ -120,6 +120,9 @@ Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.m
 - hash e verifica di immagini, dischi e file (`.md5`);
 - controllo dei GUID delle partizioni;
 - azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
+- apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
+- «Apri con…» per i file ext e WinExt4 nel menu «Apri con» di Windows;
+- anteprima di testo e immagini;
 - fsck integrato;
 - modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.
 
