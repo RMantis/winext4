@@ -1,0 +1,330 @@
+<Window x:Class="WinExt4.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WinExt4" Height="720" Width="1180" MinWidth="760" MinHeight="420"
+        FontFamily="Segoe UI" FontSize="13" Background="White"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <CollectionViewSource x:Key="SourcesView" Source="{Binding Sources}">
+            <CollectionViewSource.GroupDescriptions>
+                <PropertyGroupDescription PropertyName="Source.GroupTitle" />
+            </CollectionViewSource.GroupDescriptions>
+        </CollectionViewSource>
+    </Window.Resources>
+
+    <Window.InputBindings>
+        <KeyBinding Key="F5" Command="{x:Static NavigationCommands.Refresh}" />
+        <KeyBinding Key="Back" Command="{x:Static NavigationCommands.BrowseBack}" />
+        <KeyBinding Key="Delete" Command="{x:Static ApplicationCommands.Delete}" />
+        <KeyBinding Key="F2" Command="{x:Static ApplicationCommands.SaveAs}" />
+    </Window.InputBindings>
+    <Window.CommandBindings>
+        <CommandBinding Command="{x:Static NavigationCommands.Refresh}" Executed="OnRefreshCommand" />
+        <CommandBinding Command="{x:Static NavigationCommands.BrowseBack}" Executed="OnUpCommand" />
+        <CommandBinding Command="{x:Static ApplicationCommands.Delete}" Executed="OnDeleteCommand" />
+        <CommandBinding Command="{x:Static ApplicationCommands.SaveAs}" Executed="OnRenameCommand" />
+    </Window.CommandBindings>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Toolbar -->
+        <Border Grid.Row="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushLight}"
+                BorderThickness="0,0,0,1" Padding="6,5">
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button x:Name="BtnOpenImage" Style="{StaticResource ToolButton}" Click="OnOpenImage"
+                            ToolTip="Apri un'immagine disco (.img, .raw, ...)">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE8E5;" />
+                            <TextBlock Text=" Apri immagine" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
+                    <Button x:Name="BtnReadWrite" Style="{StaticResource ToolButton}" Click="OnToggleReadWrite"
+                            IsEnabled="False">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="RwIcon" Style="{StaticResource Icon}" Text="&#xE72E;" />
+                            <TextBlock x:Name="RwText" Text=" Sblocca scrittura" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnMount" Style="{StaticResource ToolButton}" Click="OnMount" IsEnabled="False">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="MountIcon" Style="{StaticResource Icon}" Text="&#xE8CE;" />
+                            <TextBlock x:Name="MountText" Text=" Monta su Windows" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
+                    <Button x:Name="BtnExport" Style="{StaticResource ToolButton}" Click="OnExport" IsEnabled="False"
+                            ToolTip="Copia gli elementi selezionati in una cartella di Windows">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE896;" />
+                            <TextBlock Text=" Estrai" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnImportFiles" Style="{StaticResource ToolButton}" Click="OnImportFiles" IsEnabled="False"
+                            ToolTip="Copia file di Windows nella cartella corrente (anche trascinandoli qui)">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE898;" />
+                            <TextBlock Text=" Importa file" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnImportFolder" Style="{StaticResource ToolButton}" Click="OnImportFolder" IsEnabled="False"
+                            ToolTip="Copia una cartella di Windows nella cartella corrente">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE838;" />
+                            <TextBlock Text=" Importa cartella" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnNewFolder" Style="{StaticResource ToolButton}" Click="OnNewFolder" IsEnabled="False" AutomationProperties.Name="Nuova cartella"
+                            ToolTip="Nuova cartella">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE8F4;" />
+                    </Button>
+                    <Button x:Name="BtnRename" Style="{StaticResource ToolButton}" Click="OnRename" IsEnabled="False" AutomationProperties.Name="Rinomina"
+                            ToolTip="Rinomina (F2)">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE8AC;" />
+                    </Button>
+                    <Button x:Name="BtnDelete" Style="{StaticResource ToolButton}" Click="OnDelete" IsEnabled="False" AutomationProperties.Name="Elimina"
+                            ToolTip="Elimina (Canc)">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
+                    </Button>
+                    <Button x:Name="BtnProperties" Style="{StaticResource ToolButton}" Click="OnProperties" IsEnabled="False" AutomationProperties.Name="Proprietà"
+                            ToolTip="Proprietà, permessi e proprietario Linux">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE946;" />
+                    </Button>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button x:Name="BtnClose" Style="{StaticResource ToolButton}" Click="OnCloseVolume" IsEnabled="False"
+                            ToolTip="Chiude il volume e scrive tutto su disco: dopo puoi scollegare il dispositivo">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE7E8;" />
+                            <TextBlock Text=" Chiudi" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButton}" Click="OnSettings" AutomationProperties.Name="Impostazioni" ToolTip="Impostazioni">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE713;" />
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Banners -->
+        <StackPanel Grid.Row="1" x:Name="BannerPanel">
+            <Border x:Name="ModeBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource SafeBrush}">
+                <DockPanel>
+                    <TextBlock x:Name="ModeBannerIcon" Style="{StaticResource Icon}" Text="&#xE72E;"
+                               Foreground="{StaticResource SafeTextBrush}" Margin="0,0,8,0" />
+                    <TextBlock x:Name="ModeBannerText" TextWrapping="Wrap" Foreground="{StaticResource SafeTextBrush}"
+                               VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+            <Border x:Name="MountBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource InfoBrush}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="OnOpenInExplorer">
+                        <TextBlock Text="Apri in Esplora risorse" Foreground="{StaticResource InfoTextBrush}"
+                                   TextDecorations="Underline" />
+                    </Button>
+                    <TextBlock Style="{StaticResource Icon}" Text="&#xE8CE;" Foreground="{StaticResource InfoTextBrush}"
+                               Margin="0,0,8,0" />
+                    <TextBlock x:Name="MountBannerText" Foreground="{StaticResource InfoTextBrush}"
+                               VerticalAlignment="Center" TextWrapping="Wrap" />
+                </DockPanel>
+            </Border>
+            <Border x:Name="WarnBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource WarnBrush}">
+                <DockPanel>
+                    <TextBlock Style="{StaticResource Icon}" Text="&#xE7BA;" Foreground="{StaticResource WarnTextBrush}"
+                               Margin="0,0,8,0" />
+                    <TextBlock x:Name="WarnBannerText" Foreground="{StaticResource WarnTextBrush}"
+                               VerticalAlignment="Center" TextWrapping="Wrap" />
+                </DockPanel>
+            </Border>
+            <Border x:Name="NewDiskBanner" Visibility="Collapsed" Padding="12,7" Background="{StaticResource InfoBrush}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="OnDismissNewDisk" AutomationProperties.Name="Ignora">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE711;" FontSize="12" />
+                    </Button>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="OnOpenNewDisk">
+                        <TextBlock Text="Apri" Foreground="{StaticResource InfoTextBrush}" FontWeight="SemiBold" />
+                    </Button>
+                    <TextBlock Style="{StaticResource Icon}" Text="&#xE88E;" Foreground="{StaticResource InfoTextBrush}"
+                               Margin="0,0,8,0" />
+                    <TextBlock x:Name="NewDiskText" Foreground="{StaticResource InfoTextBrush}" VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Main area -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300" MinWidth="200" />
+                <ColumnDefinition Width="5" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Sources -->
+            <DockPanel Grid.Column="0" Background="{StaticResource PanelBrush}">
+                <DockPanel DockPanel.Dock="Top" Margin="12,10,6,4">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="OnRescan" AutomationProperties.Name="Cerca dischi"
+                            ToolTip="Cerca di nuovo dischi e partizioni">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE72C;" FontSize="14" />
+                    </Button>
+                    <TextBlock Text="Dischi e immagini" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </DockPanel>
+                <CheckBox x:Name="ChkAllPartitions" DockPanel.Dock="Bottom" Margin="12,6,12,10"
+                          Content="Mostra anche partizioni non ext" Checked="OnShowAllChanged"
+                          Unchecked="OnShowAllChanged" Foreground="{StaticResource MutedBrush}" />
+                <Grid>
+                    <ListBox x:Name="SourcesList" ItemsSource="{Binding Source={StaticResource SourcesView}}"
+                             BorderThickness="0" Background="Transparent" SelectionChanged="OnSourceSelected"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" Margin="10,10,8,2" FontSize="11.5"
+                                                   Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListBox.GroupStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,4" Opacity="{Binding Opacity}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="28" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Icon}" Text="{Binding Source.Icon}" FontSize="18"
+                                               Foreground="{StaticResource AccentBrush}" />
+                                    <StackPanel Grid.Column="1">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Source.Title}" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding StateText}" Margin="6,0,0,0"
+                                                       Foreground="{StaticResource AccentBrush}" FontSize="11.5"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Source.Subtitle}" FontSize="11.5"
+                                                   Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock x:Name="NoSourcesText" Margin="16,20" TextWrapping="Wrap"
+                               Foreground="{StaticResource MutedBrush}" Visibility="Collapsed"
+                               Text="Nessun filesystem ext trovato. Collega una chiavetta o un disco USB con ext2/3/4, oppure apri un'immagine .img." />
+                </Grid>
+            </DockPanel>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="{StaticResource BorderBrushLight}" />
+
+            <!-- Browser -->
+            <DockPanel Grid.Column="2">
+                <DockPanel DockPanel.Dock="Top" Margin="8,8,8,6">
+                    <Button x:Name="BtnUp" Style="{StaticResource ToolButton}" Click="OnUp" IsEnabled="False" AutomationProperties.Name="Cartella superiore"
+                            ToolTip="Cartella superiore (Backspace)">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE74A;" />
+                    </Button>
+                    <Button x:Name="BtnRefresh" Style="{StaticResource ToolButton}" Click="OnRefresh" IsEnabled="False" AutomationProperties.Name="Aggiorna"
+                            ToolTip="Aggiorna (F5)">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE72C;" />
+                    </Button>
+                    <Border BorderBrush="{StaticResource BorderBrushLight}" BorderThickness="1" CornerRadius="4"
+                            Margin="6,0,0,0" Padding="2">
+                        <TextBox x:Name="PathBox" BorderThickness="0" VerticalContentAlignment="Center" Padding="4,2"
+                                 FontFamily="Cascadia Mono, Consolas" KeyDown="OnPathKeyDown" IsEnabled="False" />
+                    </Border>
+                </DockPanel>
+                <Grid>
+                    <ListView x:Name="FileList" BorderThickness="0" SelectionMode="Extended"
+                              MouseDoubleClick="OnItemDoubleClick" SelectionChanged="OnFileSelectionChanged"
+                              GridViewColumnHeader.Click="OnColumnHeaderClick"
+                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListView.ContextMenu>
+                            <ContextMenu x:Name="FileContextMenu" Opened="OnContextMenuOpened">
+                                <MenuItem x:Name="CmOpen" Header="Apri" Click="OnContextOpen" FontWeight="SemiBold" />
+                                <MenuItem x:Name="CmExport" Header="Estrai in…" Click="OnExport" />
+                                <Separator />
+                                <MenuItem x:Name="CmRename" Header="Rinomina" Click="OnRename" InputGestureText="F2" />
+                                <MenuItem x:Name="CmDelete" Header="Elimina" Click="OnDelete" InputGestureText="Canc" />
+                                <MenuItem x:Name="CmNewFolder" Header="Nuova cartella" Click="OnNewFolder" />
+                                <Separator />
+                                <MenuItem x:Name="CmProperties" Header="Proprietà" Click="OnProperties" />
+                            </ContextMenu>
+                        </ListView.ContextMenu>
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Nome" Width="300">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Style="{StaticResource Icon}" Text="{Binding Icon}"
+                                                           Foreground="{Binding IconBrush}" Margin="0,0,8,0" />
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding LinkText}" Foreground="{StaticResource MutedBrush}"
+                                                           VerticalAlignment="Center" Margin="6,0,0,0"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Dimensione" Width="90">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding SizeText}" HorizontalAlignment="Right" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Modificato" Width="125" DisplayMemberBinding="{Binding ModifiedText}" />
+                                <GridViewColumn Header="Permessi" Width="100">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding PermText}" FontFamily="Cascadia Mono, Consolas" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Proprietario" Width="95" DisplayMemberBinding="{Binding OwnerText}" />
+                                <GridViewColumn Header="Tipo" Width="110" DisplayMemberBinding="{Binding TypeText}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                    <StackPanel x:Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                MaxWidth="460">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE88E;" FontSize="44" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource BorderBrushLight}" />
+                        <TextBlock x:Name="EmptyTitle" Text="Collega un disco ext2/3/4" FontSize="18" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" Margin="0,12,0,6" />
+                        <TextBlock x:Name="EmptyText" TextWrapping="Wrap" TextAlignment="Center"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   Text="Il contenuto viene aperto subito in sola lettura, senza che Windows tocchi la partizione. Puoi anche aprire un'immagine .img o trascinarla qui." />
+                    </StackPanel>
+                </Grid>
+            </DockPanel>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushLight}"
+                BorderThickness="0,1,0,0" Padding="10,4">
+            <DockPanel>
+                <TextBlock x:Name="FsSummary" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}"
+                           VerticalAlignment="Center" />
+                <StackPanel x:Name="ProgressPanel" Orientation="Horizontal" DockPanel.Dock="Right" Margin="0,0,16,0"
+                            Visibility="Collapsed">
+                    <ProgressBar x:Name="Progress" Width="180" Height="10" Minimum="0" Maximum="1000" />
+                    <Button Style="{StaticResource ToolButton}" Click="OnCancelOperation" AutomationProperties.Name="Annulla operazione" ToolTip="Annulla">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE711;" FontSize="11" />
+                    </Button>
+                </StackPanel>
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

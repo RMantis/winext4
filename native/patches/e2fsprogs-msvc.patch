@@ -1,0 +1,88 @@
+diff --git a/lib/ext2fs/alloc.c b/lib/ext2fs/alloc.c
+index 3fd9216..97cfbf7 100644
+--- a/lib/ext2fs/alloc.c
++++ b/lib/ext2fs/alloc.c
+@@ -31,9 +31,9 @@
+ #undef DEBUG
+ 
+ #ifdef DEBUG
+-# define dbg_printf(f, a...)  do {printf(f, ## a); fflush(stdout); } while (0)
++# define dbg_printf(f, ...)  do {printf(f, ## __VA_ARGS__); fflush(stdout); } while (0)
+ #else
+-# define dbg_printf(f, a...)
++# define dbg_printf(f, ...)
+ #endif
+ 
+ /*
+diff --git a/lib/ext2fs/ext2fs.h b/lib/ext2fs/ext2fs.h
+index d9df007..07aeefb 100644
+--- a/lib/ext2fs/ext2fs.h
++++ b/lib/ext2fs/ext2fs.h
+@@ -112,7 +112,7 @@ typedef __u32 __bitwise		ext2_dirhash_t;
+  * Portability help for Microsoft Visual C++
+  */
+ #ifdef _MSC_VER
+-#define EXT2_QSORT_TYPE int __cdecl
++#define EXT2_QSORT_TYPE int /* x64 has a single calling convention */
+ #else
+ #define EXT2_QSORT_TYPE int
+ #endif
+diff --git a/lib/ext2fs/fallocate.c b/lib/ext2fs/fallocate.c
+index 1ef989c..c38301a 100644
+--- a/lib/ext2fs/fallocate.c
++++ b/lib/ext2fs/fallocate.c
+@@ -22,9 +22,9 @@
+ #undef DEBUG
+ 
+ #ifdef DEBUG
+-# define dbg_printf(f, a...)  do {printf(f, ## a); fflush(stdout); } while (0)
++# define dbg_printf(f, ...)  do {printf(f, ## __VA_ARGS__); fflush(stdout); } while (0)
+ #else
+-# define dbg_printf(f, a...)
++# define dbg_printf(f, ...)
+ #endif
+ 
+ /*
+diff --git a/lib/ext2fs/kernel-jbd.h b/lib/ext2fs/kernel-jbd.h
+index 4923a78..0789a84 100644
+--- a/lib/ext2fs/kernel-jbd.h
++++ b/lib/ext2fs/kernel-jbd.h
+@@ -38,13 +38,13 @@ extern int journal_enable_debug;
+ #define journal_enable_debug (-1)
+ #endif /* !CONFIG_JBD_DEBUG */
+ 
+-#ifdef __STDC__
+-#define jbd_debug(n, f, a...)						\
++#if defined(__STDC__) || defined(_MSC_VER)
++#define jbd_debug(n, f, ...)						\
+ 	do {								\
+ 		if ((n) <= journal_enable_debug) {			\
+ 			printk (KERN_DEBUG "(%s, %d): %s: ",		\
+ 				__FILE__, __LINE__, __FUNCTION__);	\
+-		  	printk (f, ## a);				\
++		  	printk (f, ## __VA_ARGS__);				\
+ 		}							\
+ 	} while (0)
+ #else
+diff --git a/lib/ext2fs/punch.c b/lib/ext2fs/punch.c
+index c48e74e..6d9d20c 100644
+--- a/lib/ext2fs/punch.c
++++ b/lib/ext2fs/punch.c
+@@ -172,7 +172,7 @@ errout:
+ 
+ #ifdef PUNCH_DEBUG
+ 
+-#define dbg_printf(f, a...)  printf(f, ## a)
++#define dbg_printf(f, ...)  printf(f, ## __VA_ARGS__)
+ 
+ static void dbg_print_extent(char *desc, struct ext2fs_extent *extent)
+ {
+@@ -194,7 +194,7 @@ static void dbg_print_extent(char *desc, struct ext2fs_extent *extent)
+ }
+ #else
+ #define dbg_print_extent(desc, ex)	do { } while (0)
+-#define dbg_printf(f, a...)		do { } while (0)
++#define dbg_printf(f, ...)		do { } while (0)
+ #endif
+ 
+ /* Free a range of blocks, respecting cluster boundaries */

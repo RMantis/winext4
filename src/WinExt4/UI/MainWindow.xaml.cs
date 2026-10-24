@@ -1,0 +1,1040 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using WinExt4.Core;
+using WinExt4.Mount;
+
+namespace WinExt4.UI;
+
+public partial class MainWindow : Window
+{
+    public ObservableCollection<SourceItem> Sources { get; } = new();
+
+    private readonly AppSettings _settings = AppSettings.Load();
+    private readonly List<Ext4Source> _imageSources = new();
+    private readonly HashSet<string> _knownKeys = new();
+    private readonly DispatcherTimer _rescanTimer;
+
+    private Ext4Volume? _vol;
+    private SourceItem? _current;
+    private MountSession? _mount;
+    private string _cwdPath = "/";
+    private uint _cwdIno = Ext4Volume.RootIno;
+    private List<EntryItem> _entries = new();
+    private string _sortColumn = "Nome";
+    private bool _sortDescending;
+    private CancellationTokenSource? _operation;
+    private Ext4Source? _pendingNewDisk;
+    private bool _scanning;
+    private bool _suppressSelection;
+    private bool _firstScan = true;
+    private bool _closeRequested;
+    private TrayIcon? _tray;
+    private bool _exiting;
+    private bool _trayHintShown;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        DataContext = this;
+        ChkAllPartitions.IsChecked = _settings.ShowAllPartitions;
+        _rescanTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
+        _rescanTimer.Tick += (_, _) => { _rescanTimer.Stop(); _ = RescanAsync(); };
+        SourceInitialized += OnSourceInitialized;
+        Closing += OnClosing;
+        UpdateUi();
+    }
+
+    // ==================================================================
+    // startup, device notifications, drag & drop
+
+    /// <summary>Runs hidden with a tray icon (started at logon) until a disk shows up.</summary>
+    public void EnterBackgroundMode(TrayIcon tray)
+    {
+        _tray = tray;
+        new WindowInteropHelper(this).EnsureHandle(); // device notifications need a window
+    }
+
+    public void ShowFromBackground()
+    {
+        if (!IsVisible) Show();
+        BringToFront();
+    }
+
+    public void ExitFromTray()
+    {
+        _exiting = true;
+        Close();
+    }
+
+    private async void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        HwndSource.FromHwnd(hwnd)!.AddHook(WndProc);
+        RegisterDiskNotifications(hwnd);
+        EnableElevatedDrop(hwnd);
+        SetStatus($"Pronto · motore {Ext4Volume.Version}");
+        await RescanAsync();
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WM_DEVICECHANGE = 0x0219, WM_DROPFILES = 0x0233;
+        const int DBT_DEVICEARRIVAL = 0x8000, DBT_DEVICEREMOVECOMPLETE = 0x8004, DBT_DEVNODES_CHANGED = 0x0007;
+
+        if (msg == WM_DEVICECHANGE)
+        {
+            int ev = wParam.ToInt32();
+            if (ev is DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE or DBT_DEVNODES_CHANGED)
+            {
+                _rescanTimer.Stop();
+                _rescanTimer.Start();
+            }
+        }
+        else if (msg == WM_DROPFILES)
+        {
+            var files = Interop.DroppedFiles(wParam);
+            handled = true;
+            Dispatcher.BeginInvoke(() => OnFilesDropped(files));
+        }
+        return IntPtr.Zero;
+    }
+
+    private static void RegisterDiskNotifications(IntPtr hwnd)
+    {
+        var filter = new Interop.DEV_BROADCAST_DEVICEINTERFACE
+        {
+            dbcc_size = Marshal.SizeOf<Interop.DEV_BROADCAST_DEVICEINTERFACE>(),
+            dbcc_devicetype = 5, // DBT_DEVTYP_DEVICEINTERFACE
+            dbcc_classguid = new Guid("53F56307-B6BF-11D0-94F2-00A0C91EFB8B"), // GUID_DEVINTERFACE_DISK
+        };
+        Interop.RegisterDeviceNotification(hwnd, ref filter, 0);
+    }
+
+    /// <summary>
+    /// We run elevated, so Explorer (not elevated) cannot use OLE drag &amp; drop
+    /// on us. The classic WM_DROPFILES path works once the messages are allowed.
+    /// </summary>
+    private static void EnableElevatedDrop(IntPtr hwnd)
+    {
+        Interop.ChangeWindowMessageFilterEx(hwnd, 0x0233, 1, IntPtr.Zero); // WM_DROPFILES
+        Interop.ChangeWindowMessageFilterEx(hwnd, 0x004A, 1, IntPtr.Zero); // WM_COPYDATA
+        Interop.ChangeWindowMessageFilterEx(hwnd, 0x0049, 1, IntPtr.Zero); // WM_COPYGLOBALDATA
+        Interop.DragAcceptFiles(hwnd, true);
+    }
+
+    private async void OnFilesDropped(string[] files)
+    {
+        if (files.Length == 0) return;
+        bool allImages = files.All(f => File.Exists(f) && IsImageFile(f));
+        if (allImages && (_vol is null || !_vol.ReadWrite))
+        {
+            foreach (var f in files) OpenImage(f);
+            return;
+        }
+        if (_vol is null) return;
+        if (!_vol.ReadWrite)
+        {
+            SetStatus("Per copiare file nel disco ext sblocca prima la scrittura.");
+            return;
+        }
+        await RunTransferAsync("Importazione", t => t.Import(files, _cwdIno));
+    }
+
+    private static bool IsImageFile(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".img" or ".raw" or ".bin" or ".dd" or ".ext4" or ".ext3"
+            or ".ext2" or ".iso";
+
+    // ==================================================================
+    // sources
+
+    private async Task RescanAsync()
+    {
+        if (_scanning) return;
+        _scanning = true;
+        try
+        {
+            List<Ext4Source> disks;
+            string? error = null;
+            try
+            {
+                disks = await Task.Run(SourceScanner.ScanDisks);
+            }
+            catch (Ext4Exception ex)
+            {
+                disks = new();
+                error = ex.Code == Errno.EACCES
+                    ? "Per leggere i dischi servono i privilegi di amministratore: riavvia WinExt4 come amministratore."
+                    : ex.Message;
+            }
+            catch (DllNotFoundException)
+            {
+                disks = new();
+                error = "ext4core.dll non trovata accanto a WinExt4.exe.";
+            }
+
+            // While open read-write the volume is locked and its superblock may
+            // not be readable through the disk: keep our own description.
+            if (_current is not null && !_current.Source.IsImage)
+            {
+                int i = disks.FindIndex(d => d.Device == _current.Source.Device);
+                if (i >= 0) disks[i] = _current.Source;
+                else if (_vol is not null) HandleDeviceRemoved();
+            }
+
+            var all = disks.Concat(_imageSources).ToList();
+            ApplySources(all);
+
+            var newExternal = all.Where(s => s.IsExt && !s.IsImage && !_knownKeys.Contains(s.Key)).ToList();
+            foreach (var s in all) _knownKeys.Add(s.Key);
+
+            if (_firstScan)
+            {
+                _firstScan = false;
+                var first = all.FirstOrDefault(s => s.IsExt && s.IsExternal);
+                if (first is not null && _vol is null && _settings.AutoOpenOnInsert && _tray is null)
+                    SelectAndOpen(first);
+            }
+            else if (newExternal.Count > 0)
+            {
+                OnNewDisk(newExternal[0]);
+            }
+
+            if (error is not null) SetStatus(error);
+        }
+        finally
+        {
+            _scanning = false;
+        }
+    }
+
+    private void ApplySources(List<Ext4Source> all)
+    {
+        string? selectedKey = (SourcesList.SelectedItem as SourceItem)?.Source.Key;
+        _suppressSelection = true;
+        try
+        {
+            // Reuse items by key: the open volume keeps a reference to its item
+            // (state label), and a rescan may finish while it is being opened.
+            var existing = new Dictionary<string, SourceItem>();
+            foreach (var i in Sources) existing[i.Source.Key] = i;
+            if (_current is not null) existing[_current.Source.Key] = _current;
+            Sources.Clear();
+            foreach (var s in all.Where(s => s.IsExt || _settings.ShowAllPartitions))
+            {
+                if (existing.TryGetValue(s.Key, out var item))
+                    item.Source = s;
+                else
+                    item = new SourceItem(s);
+                Sources.Add(item);
+            }
+            var sel = Sources.FirstOrDefault(i => i.Source.Key == selectedKey);
+            SourcesList.SelectedItem = sel;
+        }
+        finally
+        {
+            _suppressSelection = false;
+        }
+        NoSourcesText.Visibility = Sources.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnNewDisk(Ext4Source s)
+    {
+        _tray?.Notify("Disco ext collegato", $"{s.Title} · {s.Subtitle}");
+        if (_vol is null && _settings.AutoOpenOnInsert)
+        {
+            ShowFromBackground();
+            SelectAndOpen(s);
+            return;
+        }
+        if (!IsVisible) ShowFromBackground();
+        _pendingNewDisk = s;
+        NewDiskText.Text = $"Nuovo disco ext rilevato: {s.Title} ({s.Subtitle})";
+        NewDiskBanner.Visibility = Visibility.Visible;
+        BringToFront();
+    }
+
+    private void BringToFront()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        Topmost = true;
+        Topmost = false;
+    }
+
+    private void OnOpenNewDisk(object sender, RoutedEventArgs e)
+    {
+        NewDiskBanner.Visibility = Visibility.Collapsed;
+        if (_pendingNewDisk is { } s) SelectAndOpen(s);
+        _pendingNewDisk = null;
+    }
+
+    private void OnDismissNewDisk(object sender, RoutedEventArgs e)
+    {
+        NewDiskBanner.Visibility = Visibility.Collapsed;
+        _pendingNewDisk = null;
+    }
+
+    private void SelectAndOpen(Ext4Source s)
+    {
+        var item = Sources.FirstOrDefault(i => i.Source.Key == s.Key);
+        if (item is null) return;
+        SourcesList.SelectedItem = item; // triggers OnSourceSelected
+    }
+
+    private async void OnSourceSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSelection) return;
+        if (SourcesList.SelectedItem is not SourceItem item) return;
+        if (_current is not null && item.Source.Key == _current.Source.Key && _vol is not null) return;
+        if (!item.Source.IsExt)
+        {
+            SetStatus("Questa partizione non contiene un filesystem ext2/3/4.");
+            return;
+        }
+        if (!await ConfirmLeaveCurrentAsync())
+        {
+            _suppressSelection = true;
+            SourcesList.SelectedItem = _current;
+            _suppressSelection = false;
+            return;
+        }
+        await OpenSourceAsync(item, readWrite: false);
+    }
+
+    private async void OnRescan(object sender, RoutedEventArgs e) => await RescanAsync();
+
+    private void OnShowAllChanged(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowAllPartitions = ChkAllPartitions.IsChecked == true;
+        _settings.Save();
+        _ = RescanAsync();
+    }
+
+    private void OnOpenImage(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "Apri immagine disco",
+            Filter = "Immagini disco (*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2)|*.img;*.raw;*.bin;*.dd;*.ext4;*.ext3;*.ext2|Tutti i file (*.*)|*.*",
+            Multiselect = true,
+        };
+        if (dlg.ShowDialog(this) == true)
+            foreach (var f in dlg.FileNames) OpenImage(f);
+    }
+
+    public void OpenImage(string path)
+    {
+        List<Ext4Source> found;
+        try
+        {
+            found = SourceScanner.ScanImage(path);
+        }
+        catch (Ext4Exception ex)
+        {
+            MessageBox.Show(this, $"{Path.GetFileName(path)}\n\n{ex.Message}", "Apri immagine",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        _imageSources.RemoveAll(s => string.Equals(s.ImagePath, path, StringComparison.OrdinalIgnoreCase));
+        _imageSources.AddRange(found);
+        foreach (var s in found) _knownKeys.Add(s.Key);
+        _settings.AddRecentImage(path);
+        _settings.Save();
+
+        var all = Sources.Select(i => i.Source).Where(s => !s.IsImage).Concat(_imageSources).ToList();
+        ApplySources(all);
+        var first = found.FirstOrDefault(s => s.IsExt);
+        if (first is null)
+        {
+            SetStatus($"{Path.GetFileName(path)}: nessun filesystem ext trovato.");
+            return;
+        }
+        SelectAndOpen(first);
+    }
+
+    // ==================================================================
+    // open / close / read-write
+
+    private async Task<bool> ConfirmLeaveCurrentAsync()
+    {
+        if (_vol is null) return true;
+        if (_operation is not null)
+        {
+            MessageBox.Show(this, "Attendi la fine dell'operazione in corso.", "WinExt4");
+            return false;
+        }
+        if (_mount is not null || _vol.ReadWrite)
+        {
+            var r = MessageBox.Show(this,
+                "Il volume attuale è " + (_mount is not null ? $"montato su {_mount.DriveLetter}" : "aperto in scrittura") +
+                ".\nVerrà smontato e chiuso (tutti i dati vengono scritti su disco). Continuare?",
+                "Chiudere il volume?", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            if (r != MessageBoxResult.OK) return false;
+        }
+        await CloseVolumeAsync();
+        return true;
+    }
+
+    private async Task OpenSourceAsync(SourceItem item, bool readWrite)
+    {
+        SetStatus($"Apertura di {item.Source.Title}…");
+        try
+        {
+            var vol = await Task.Run(() => Ext4Volume.Open(item.Source, readWrite));
+            _vol = vol;
+            _current = item;
+            _cwdPath = "/";
+            await NavigateAsync("/");
+            var info = vol.GetInfo();
+            SetStatus(readWrite && info.JournalReplayed
+                ? "Aperto in scrittura. Il journal conteneva modifiche non applicate ed è stato riprodotto."
+                : $"Aperto {info.Kind} «{(info.Label.Length > 0 ? info.Label : item.Source.Title)}».");
+        }
+        catch (Ext4Exception ex)
+        {
+            _vol = null;
+            _current = null;
+            MessageBox.Show(this, ex.Message, "Impossibile aprire il volume", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetStatus(ex.Message);
+        }
+        UpdateUi();
+    }
+
+    private async Task CloseVolumeAsync()
+    {
+        _mount?.Dispose();
+        _mount = null;
+        var vol = _vol;
+        _vol = null;
+        if (vol is not null)
+        {
+            try
+            {
+                await Task.Run(vol.Dispose);
+            }
+            catch (Ext4Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Errore in chiusura", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        if (_current is not null) _current.StateText = "";
+        _current = null;
+        _entries.Clear();
+        FileList.ItemsSource = null;
+        UpdateUi();
+    }
+
+    private async void OnCloseVolume(object sender, RoutedEventArgs e)
+    {
+        if (_operation is not null) return;
+        bool wasRw = _vol?.ReadWrite == true;
+        await CloseVolumeAsync();
+        _suppressSelection = true;
+        SourcesList.SelectedItem = null;
+        _suppressSelection = false;
+        SetStatus(wasRw ? "Volume chiuso e dati scritti su disco: puoi scollegare il dispositivo in sicurezza."
+                        : "Volume chiuso.");
+    }
+
+    private void HandleDeviceRemoved()
+    {
+        bool wasRw = _vol?.ReadWrite == true;
+        try { _mount?.Dispose(); } catch (Exception) { }
+        _mount = null;
+        try { _vol?.Dispose(); } catch (Exception) { }
+        _vol = null;
+        _current = null;
+        _entries.Clear();
+        FileList.ItemsSource = null;
+        UpdateUi();
+        if (wasRw)
+            MessageBox.Show(this,
+                "Il dispositivo è stato scollegato mentre era aperto in scrittura.\n" +
+                "Alcune modifiche potrebbero non essere state salvate: al prossimo utilizzo su Linux esegui e2fsck.",
+                "Dispositivo rimosso", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            SetStatus("Il dispositivo è stato scollegato.");
+    }
+
+    private async void OnToggleReadWrite(object sender, RoutedEventArgs e)
+    {
+        if (_vol is null || _current is null || _operation is not null) return;
+        var item = _current;
+        string path = _cwdPath;
+
+        if (!_vol.ReadWrite)
+        {
+            var info = _vol.GetInfo();
+            if (info.RwBlocker.Length > 0)
+            {
+                MessageBox.Show(this,
+                    "Questo filesystem non può essere aperto in scrittura in modo sicuro:\n\n" + info.RwBlocker,
+                    "Scrittura non disponibile", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine("Sbloccando la scrittura:");
+            sb.AppendLine();
+            if (!item.Source.IsImage)
+                sb.AppendLine("• la partizione viene bloccata per Windows e per gli altri programmi finché non la richiudi;");
+            sb.AppendLine("• le modifiche vengono scritte direttamente, senza usare il journal ext3/4: prima di scollegare il disco premi «Chiudi» (o richiudi in sola lettura), altrimenti al rientro su Linux servirà e2fsck;");
+            if (info.NeedsRecovery)
+                sb.AppendLine("• il journal contiene modifiche non applicate (il disco non è stato smontato bene da Linux): verranno riprodotte ora;");
+            if (!info.Clean)
+                sb.AppendLine("• il filesystem risulta non smontato correttamente: è consigliato un controllo con e2fsck;");
+            sb.AppendLine();
+            sb.Append("Continuare?");
+            if (MessageBox.Show(this, sb.ToString(), "Sbloccare la scrittura?", MessageBoxButton.OKCancel,
+                    MessageBoxImage.Question) != MessageBoxResult.OK)
+                return;
+        }
+
+        bool wasMounted = _mount is not null;
+        string? letter = _mount?.DriveLetter;
+        bool toRw = !_vol.ReadWrite;
+        await CloseVolumeAsync();
+        await OpenSourceAsync(item, toRw);
+        if (_vol is null && toRw)
+            await OpenSourceAsync(item, false); // fall back to read-only
+        if (_vol is not null)
+        {
+            SourcesList.SelectedItem = item;
+            await NavigateAsync(path);
+            if (wasMounted) DoMount(letter);
+        }
+    }
+
+    // ==================================================================
+    // mount
+
+    private void OnMount(object sender, RoutedEventArgs e)
+    {
+        if (_vol is null) return;
+        if (_mount is not null)
+        {
+            string l = _mount.DriveLetter;
+            try
+            {
+                _mount.Dispose();
+                _vol.Flush();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Smontaggio", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            _mount = null;
+            SetStatus($"Unità {l} smontata.");
+            UpdateUi();
+            return;
+        }
+        if (!MountSession.WinFspInstalled)
+        {
+            if (MessageBox.Show(this,
+                    "Per vedere il disco come unità in Esplora risorse serve WinFsp, un driver open source firmato (gratuito).\n\nAprire la pagina di download?",
+                    "WinFsp non installato", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                Process.Start(new ProcessStartInfo("https://winfsp.dev/rel/") { UseShellExecute = true });
+            return;
+        }
+        var dlg = new OptionsDialog(_settings, forMount: true, readOnly: !_vol.ReadWrite) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+        _settings.Save();
+        DoMount(dlg.SelectedDriveLetter);
+    }
+
+    private void DoMount(string? letter)
+    {
+        if (_vol is null) return;
+        try
+        {
+            if (letter is not null && !MountSession.FreeDriveLetters().Contains(letter)) letter = null;
+            _mount = MountSession.Mount(_vol, _settings, letter);
+            SetStatus($"Montato su {_mount.DriveLetter}");
+            if (_settings.OpenExplorerAfterMount)
+                Process.Start(new ProcessStartInfo("explorer.exe", _mount.DriveLetter + "\\"));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or DllNotFoundException or FileNotFoundException)
+        {
+            MessageBox.Show(this, ex.Message, "Montaggio non riuscito", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        UpdateUi();
+    }
+
+    private void OnOpenInExplorer(object sender, RoutedEventArgs e)
+    {
+        if (_mount is not null)
+            Process.Start(new ProcessStartInfo("explorer.exe", _mount.DriveLetter + "\\"));
+    }
+
+    // ==================================================================
+    // browsing
+
+    private static string Combine(string dir, string name) => dir == "/" ? "/" + name : dir + "/" + name;
+
+    private static string ParentOf(string path)
+    {
+        if (path == "/") return "/";
+        int i = path.TrimEnd('/').LastIndexOf('/');
+        return i <= 0 ? "/" : path[..i];
+    }
+
+    private async Task NavigateAsync(string path)
+    {
+        var vol = _vol;
+        if (vol is null) return;
+        try
+        {
+            var (ino, list) = await Task.Run(() =>
+            {
+                // "/link/." makes namei follow a final symlink to a directory
+                uint dirIno = path == "/" ? Ext4Volume.RootIno : vol.Lookup(path + "/.");
+                var items = new List<EntryItem>();
+                foreach (var e in vol.ReadDir(dirIno))
+                {
+                    if (!vol.TryStat(e.Ino, out var st)) continue;
+                    string? target = null;
+                    Ext4Stat? tst = null;
+                    uint tino = 0;
+                    if (st!.IsSymlink)
+                    {
+                        try { target = vol.ReadLink(e.Ino); } catch (Ext4Exception) { target = "?"; }
+                        tino = vol.Follow(dirIno, e.Ino);
+                        if (tino != 0) vol.TryStat(tino, out tst);
+                    }
+                    items.Add(new EntryItem { Entry = e, Stat = st, LinkTarget = target, TargetStat = tst, TargetIno = tino });
+                }
+                return (dirIno, items);
+            });
+            if (!ReferenceEquals(vol, _vol)) return;
+            _cwdPath = path;
+            _cwdIno = ino;
+            _entries = list;
+            ApplySort();
+            PathBox.Text = path;
+            SetStatus($"{list.Count} elementi");
+        }
+        catch (Ext4Exception ex)
+        {
+            SetStatus($"{path}: {ex.Message}");
+        }
+        UpdateUi();
+    }
+
+    private void ApplySort()
+    {
+        IEnumerable<EntryItem> q = _entries;
+        Func<EntryItem, object> key = _sortColumn switch
+        {
+            "Dimensione" => i => i.Stat.Size,
+            "Modificato" => i => i.Stat.ModifyTime,
+            "Permessi" => i => i.Stat.Mode,
+            "Proprietario" => i => ((ulong)i.Stat.Uid << 32) | i.Stat.Gid,
+            "Tipo" => i => i.TypeText,
+            _ => i => i.Name,
+        };
+        var cmp = Comparer<object>.Create((a, b) => a is string sa && b is string sb
+            ? string.Compare(sa, sb, StringComparison.CurrentCultureIgnoreCase)
+            : Comparer<object>.Default.Compare(a, b));
+        var ordered = q.OrderByDescending(i => i.IsDirectoryLike);
+        ordered = _sortDescending ? ordered.ThenByDescending(key, cmp) : ordered.ThenBy(key, cmp);
+        FileList.ItemsSource = ordered.ToList();
+    }
+
+    private void OnColumnHeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not GridViewColumnHeader { Column: not null } h) return;
+        string col = h.Column.Header as string ?? "Nome";
+        _sortDescending = col == _sortColumn && !_sortDescending;
+        _sortColumn = col;
+        ApplySort();
+    }
+
+    private async void OnItemDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FileList.SelectedItem is EntryItem item) await OpenItemAsync(item);
+    }
+
+    private async void OnContextOpen(object sender, RoutedEventArgs e)
+    {
+        if (FileList.SelectedItem is EntryItem item) await OpenItemAsync(item);
+    }
+
+    private async Task OpenItemAsync(EntryItem item)
+    {
+        if (_vol is null) return;
+        if (item.IsDirectoryLike)
+        {
+            await NavigateAsync(Combine(_cwdPath, item.Entry.Name));
+            return;
+        }
+        if (item.IsLink && item.TargetStat is null)
+        {
+            SetStatus($"Il link punta a «{item.LinkTarget}», che non esiste in questo filesystem.");
+            return;
+        }
+        // Open a temporary copy with the associated Windows program.
+        string dir = Path.Combine(Path.GetTempPath(), "WinExt4", Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        bool ok = await RunTransferAsync("Apertura", t => t.Export(_cwdIno, new[] { item.Entry }, dir), refresh: false);
+        string file = Path.Combine(dir, LinuxNames.ForExport(item.Entry.Name));
+        if (!ok || !File.Exists(file)) return;
+        try
+        {
+            File.SetAttributes(file, FileAttributes.ReadOnly);
+            Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
+            SetStatus("Aperta una copia temporanea in sola lettura: le modifiche non tornano nel disco ext (usa «Importa» o monta il disco).");
+        }
+        catch (Win32Exception ex)
+        {
+            SetStatus(ex.Message);
+        }
+    }
+
+    private async void OnUp(object sender, RoutedEventArgs e) => await GoUpAsync();
+
+    private async void OnUpCommand(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (PathBox.IsKeyboardFocusWithin) return;
+        await GoUpAsync();
+    }
+
+    private async Task GoUpAsync()
+    {
+        if (_vol is null || _cwdPath == "/") return;
+        string from = _cwdPath;
+        await NavigateAsync(ParentOf(_cwdPath));
+        string name = from[(from.LastIndexOf('/') + 1)..];
+        var back = (FileList.ItemsSource as List<EntryItem>)?.FirstOrDefault(i => i.Entry.Name == name);
+        if (back is not null)
+        {
+            FileList.SelectedItem = back;
+            FileList.ScrollIntoView(back);
+        }
+    }
+
+    private async void OnRefresh(object sender, RoutedEventArgs e) => await NavigateAsync(_cwdPath);
+
+    private async void OnRefreshCommand(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (_vol is not null) await NavigateAsync(_cwdPath);
+        else await RescanAsync();
+    }
+
+    private async void OnPathKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        string p = PathBox.Text.Trim().Replace('\\', '/');
+        if (!p.StartsWith('/')) p = "/" + p;
+        if (p.Length > 1) p = p.TrimEnd('/');
+        await NavigateAsync(p);
+    }
+
+    private void OnFileSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateUi();
+
+    private List<EntryItem> Selected() => FileList.SelectedItems.Cast<EntryItem>().ToList();
+
+    // ==================================================================
+    // file operations
+
+    private async Task<bool> RunTransferAsync(string title, Action<FileTransfer> work, bool refresh = true)
+    {
+        if (_vol is null || _operation is not null) return false;
+        var cts = new CancellationTokenSource();
+        _operation = cts;
+        ProgressPanel.Visibility = Visibility.Visible;
+        Progress.Value = 0;
+        UpdateUi();
+        var progress = new Progress<TransferProgress>(p =>
+        {
+            Progress.Value = p.BytesTotal > 0 ? 1000.0 * p.BytesDone / p.BytesTotal : 0;
+            SetStatus($"{title}: {p.CurrentItem}  ({Format.Size((ulong)p.BytesDone)} di {Format.Size((ulong)p.BytesTotal)})");
+        });
+        var transfer = new FileTransfer(_vol, _settings, progress, cts.Token);
+        bool overwriteAll = false;
+        transfer.OnConflict = name =>
+        {
+            if (overwriteAll) return ConflictChoice.Overwrite;
+            return Dispatcher.Invoke(() =>
+            {
+                var d = new ConflictDialog(name) { Owner = this };
+                d.ShowDialog();
+                if (d.ApplyToAll && d.Choice == ConflictChoice.Overwrite) overwriteAll = true;
+                return d.Choice;
+            });
+        };
+
+        bool ok = false;
+        try
+        {
+            await Task.Run(() => work(transfer), cts.Token);
+            ok = true;
+            var st = transfer.State;
+            string msg = $"{title} completata: {st.FilesDone} elementi";
+            if (st.Skipped > 0) msg += $", {st.Skipped} saltati";
+            SetStatus(msg);
+            if (st.Problems.Count > 0)
+                MessageBox.Show(this, string.Join("\n", st.Problems.Take(30)), title, MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus($"{title} annullata.");
+        }
+        catch (Exception ex) when (ex is Ext4Exception or IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"{title}: {ex.Message}");
+            MessageBox.Show(this, $"{transfer.State.CurrentItem}\n\n{ex.Message}", title, MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _operation = null;
+            ProgressPanel.Visibility = Visibility.Collapsed;
+        }
+        if (_closeRequested)
+        {
+            Close();
+            return ok;
+        }
+        if (refresh) await NavigateAsync(_cwdPath);
+        UpdateUi();
+        return ok;
+    }
+
+    private void OnCancelOperation(object sender, RoutedEventArgs e) => _operation?.Cancel();
+
+    private async void OnExport(object sender, RoutedEventArgs e)
+    {
+        var sel = Selected();
+        if (_vol is null || sel.Count == 0) return;
+        var dlg = new OpenFolderDialog { Title = "Cartella di destinazione" };
+        if (dlg.ShowDialog(this) != true) return;
+        await RunTransferAsync("Estrazione", t => t.Export(_cwdIno, sel.Select(i => i.Entry), dlg.FolderName));
+    }
+
+    private async void OnImportFiles(object sender, RoutedEventArgs e)
+    {
+        if (_vol is not { ReadWrite: true }) return;
+        var dlg = new OpenFileDialog { Title = $"Copia file in {_cwdPath}", Multiselect = true };
+        if (dlg.ShowDialog(this) != true) return;
+        await RunTransferAsync("Importazione", t => t.Import(dlg.FileNames, _cwdIno));
+    }
+
+    private async void OnImportFolder(object sender, RoutedEventArgs e)
+    {
+        if (_vol is not { ReadWrite: true }) return;
+        var dlg = new OpenFolderDialog { Title = $"Copia cartelle in {_cwdPath}", Multiselect = true };
+        if (dlg.ShowDialog(this) != true) return;
+        await RunTransferAsync("Importazione", t => t.Import(dlg.FolderNames, _cwdIno));
+    }
+
+    private async void OnNewFolder(object sender, RoutedEventArgs e)
+    {
+        if (_vol is not { ReadWrite: true } vol) return;
+        var dlg = new InputDialog("Nuova cartella", "Nome della cartella:", "Nuova cartella") { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var (uid, gid) = _settings.OwnerFor(vol.Stat(_cwdIno));
+            vol.CreateDirectory(_cwdIno, Ext4Volume.Encode(dlg.Value), _settings.DirMode, uid, gid);
+            vol.Flush();
+        }
+        catch (Ext4Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Nuova cartella", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        await NavigateAsync(_cwdPath);
+    }
+
+    private async void OnRename(object sender, RoutedEventArgs e)
+    {
+        if (_vol is not { ReadWrite: true } vol || FileList.SelectedItem is not EntryItem item) return;
+        var dlg = new InputDialog("Rinomina", "Nuovo nome:", item.Entry.Name) { Owner = this };
+        if (dlg.ShowDialog() != true || dlg.Value == item.Entry.Name) return;
+        try
+        {
+            vol.Rename(_cwdIno, item.Entry.RawName, _cwdIno, Ext4Volume.Encode(dlg.Value), replace: false);
+            vol.Flush();
+        }
+        catch (Ext4Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Rinomina", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        await NavigateAsync(_cwdPath);
+    }
+
+    private void OnRenameCommand(object sender, ExecutedRoutedEventArgs e) => OnRename(sender, e);
+
+    private async void OnDelete(object sender, RoutedEventArgs e)
+    {
+        var sel = Selected();
+        if (_vol is not { ReadWrite: true } || sel.Count == 0) return;
+        string what = sel.Count == 1 ? $"«{sel[0].Entry.Name}»" : $"{sel.Count} elementi";
+        if (MessageBox.Show(this, $"Eliminare definitivamente {what}?\nLe cartelle vengono eliminate con tutto il contenuto.",
+                "Elimina", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+            return;
+        await RunTransferAsync("Eliminazione", t => t.Delete(_cwdIno, sel.Select(i => i.Entry)));
+    }
+
+    private void OnDeleteCommand(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (!PathBox.IsKeyboardFocusWithin) OnDelete(sender, e);
+    }
+
+    private async void OnProperties(object sender, RoutedEventArgs e)
+    {
+        if (_vol is null) return;
+        if (FileList.SelectedItem is not EntryItem item)
+        {
+            new VolumeInfoDialog(_vol, _current?.Source) { Owner = this }.ShowDialog();
+            return;
+        }
+        var dlg = new PropertiesDialog(_vol, item, _cwdPath) { Owner = this };
+        if (dlg.ShowDialog() == true) await NavigateAsync(_cwdPath);
+    }
+
+    private void OnContextMenuOpened(object sender, RoutedEventArgs e)
+    {
+        bool rw = _vol?.ReadWrite == true;
+        int n = FileList.SelectedItems.Count;
+        CmOpen.IsEnabled = n == 1;
+        CmExport.IsEnabled = n > 0;
+        CmRename.IsEnabled = rw && n == 1;
+        CmDelete.IsEnabled = rw && n > 0;
+        CmNewFolder.IsEnabled = rw;
+        CmProperties.IsEnabled = _vol is not null;
+    }
+
+    private void OnSettings(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OptionsDialog(_settings, forMount: false, readOnly: false) { Owner = this };
+        if (dlg.ShowDialog() == true)
+        {
+            _settings.Save();
+            _ = RescanAsync();
+        }
+    }
+
+    // ==================================================================
+    // state
+
+    private void SetStatus(string text) => StatusText.Text = text;
+
+    private void UpdateUi()
+    {
+        bool open = _vol is not null;
+        bool rw = _vol?.ReadWrite == true;
+        bool busy = _operation is not null;
+        int sel = FileList.SelectedItems.Count;
+
+        BtnReadWrite.IsEnabled = open && !busy;
+        RwIcon.Text = rw ? "" : "";
+        RwText.Text = rw ? " Torna in sola lettura" : " Sblocca scrittura";
+        BtnMount.IsEnabled = open && !busy;
+        MountIcon.Text = _mount is null ? "" : "";
+        MountText.Text = _mount is null ? " Monta su Windows" : $" Smonta {_mount.DriveLetter}";
+        BtnExport.IsEnabled = open && sel > 0 && !busy;
+        BtnImportFiles.IsEnabled = BtnImportFolder.IsEnabled = BtnNewFolder.IsEnabled = rw && !busy;
+        BtnRename.IsEnabled = rw && sel == 1 && !busy;
+        BtnDelete.IsEnabled = rw && sel > 0 && !busy;
+        BtnProperties.IsEnabled = open;
+        BtnClose.IsEnabled = open && !busy;
+        BtnUp.IsEnabled = open && _cwdPath != "/";
+        BtnRefresh.IsEnabled = PathBox.IsEnabled = open;
+        EmptyState.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
+        FileList.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+
+        if (_current is not null)
+            _current.StateText = _mount is not null ? $"· {_mount.DriveLetter}" : rw ? "· scrittura" : "· aperto";
+
+        if (!open)
+        {
+            ModeBanner.Visibility = MountBanner.Visibility = WarnBanner.Visibility = Visibility.Collapsed;
+            FsSummary.Text = "";
+            Title = "WinExt4";
+            return;
+        }
+
+        var info = _vol!.GetInfo();
+        ModeBanner.Visibility = Visibility.Visible;
+        if (rw)
+        {
+            ModeBanner.Background = (System.Windows.Media.Brush)FindResource("WarnBrush");
+            ModeBannerIcon.Foreground = ModeBannerText.Foreground = (System.Windows.Media.Brush)FindResource("WarnTextBrush");
+            ModeBannerIcon.Text = "";
+            ModeBannerText.Text = "Scrittura attiva" + (_current?.Source.IsImage == true ? "" : " · partizione bloccata per Windows") +
+                                  ". Premi «Chiudi» o torna in sola lettura prima di scollegare il disco.";
+        }
+        else
+        {
+            ModeBanner.Background = (System.Windows.Media.Brush)FindResource("SafeBrush");
+            ModeBannerIcon.Foreground = ModeBannerText.Foreground = (System.Windows.Media.Brush)FindResource("SafeTextBrush");
+            ModeBannerIcon.Text = "";
+            ModeBannerText.Text = "Sola lettura: niente viene scritto sulla partizione. Puoi scollegare il disco quando vuoi.";
+        }
+
+        MountBanner.Visibility = _mount is null ? Visibility.Collapsed : Visibility.Visible;
+        if (_mount is not null)
+            MountBannerText.Text = $"Montato su {_mount.DriveLetter} " + (rw ? "in lettura/scrittura" : "in sola lettura") +
+                                   " · permessi e proprietari Linux non sono tradotti in permessi Windows.";
+
+        var warnings = new List<string>();
+        if (info.NeedsRecovery)
+            warnings.Add("Il journal contiene modifiche non ancora applicate (il disco non è stato smontato bene): alcuni file potrebbero sembrare vecchi. Sbloccando la scrittura verranno applicate.");
+        else if (!info.Clean && !rw)
+            warnings.Add("Il filesystem non risulta smontato correttamente: su Linux è consigliato e2fsck.");
+        if (info.HasErrors)
+            warnings.Add("Il filesystem è segnato con errori: esegui e2fsck su Linux prima di scriverci.");
+        WarnBanner.Visibility = warnings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        WarnBannerText.Text = string.Join(" ", warnings);
+
+        FsSummary.Text = $"{info.Kind} · {(info.Label.Length > 0 ? info.Label + " · " : "")}" +
+                         $"{Format.Size(info.FreeBytes)} liberi di {Format.Size(info.TotalBytes)}";
+        Title = $"WinExt4 — {(info.Label.Length > 0 ? info.Label : _current?.Source.Title)}{(rw ? " (scrittura)" : "")}";
+    }
+
+    private async void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (_operation is not null)
+        {
+            if (MessageBox.Show(this, "Un'operazione è in corso. Annullarla e uscire?", "WinExt4",
+                    MessageBoxButton.OKCancel) != MessageBoxResult.OK)
+            {
+                e.Cancel = true;
+                return;
+            }
+            // The worker still uses the volume: close once it has stopped.
+            _closeRequested = true;
+            _operation.Cancel();
+            e.Cancel = true;
+            return;
+        }
+        if (_tray is not null && !_exiting)
+        {
+            // Background mode: closing the window only hides it.
+            e.Cancel = true;
+            if (_vol is not null) await CloseVolumeAsync();
+            Hide();
+            if (!_trayHintShown)
+            {
+                _trayHintShown = true;
+                _tray.Notify("WinExt4 è ancora attivo", "Resta nell'area di notifica e si apre quando colleghi un disco ext. Clic destro sull'icona per uscire.");
+            }
+            return;
+        }
+        if (_vol is null) return;
+        e.Cancel = true;
+        await CloseVolumeAsync();
+        Closing -= OnClosing;
+        Close();
+    }
+}

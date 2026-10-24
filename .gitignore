@@ -1,0 +1,11 @@
+# build output
+native/build/
+bin/
+obj/
+dist/
+*.user
+.vs/
+
+# generated test data (tests/make_images.sh)
+tests/img/
+tests/work/

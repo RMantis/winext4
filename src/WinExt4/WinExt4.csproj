@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- only for the tray NotifyIcon; keep WinForms names out of the global usings -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\winext4.ico</ApplicationIcon>
+    <AssemblyName>WinExt4</AssemblyName>
+    <RootNamespace>WinExt4</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>WinExt4</Product>
+    <Description>Lettura e scrittura di filesystem ext2/3/4 su Windows senza driver non firmati</Description>
+    <WinFspDir>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\WinFsp</WinFspDir>
+    <NativeOut>$(MSBuildThisFileDirectory)..\..\native\build\Release</NativeOut>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WinFsp .NET binding (installed with WinFsp; its signed driver does the kernel work) -->
+    <Reference Include="winfsp-msil">
+      <HintPath>$(WinFspDir)\bin\winfsp-msil.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ext4core.dll: libext2fs + our Windows I/O layer, built by native\build.cmd -->
+    <None Include="$(NativeOut)\ext4core.dll" Link="ext4core.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(NativeOut)\ext4core.dll')" />
+    <Resource Include="Assets\winext4.ico" />
+  </ItemGroup>
+
+  <Target Name="CheckNative" BeforeTargets="Build">
+    <Error Condition="!Exists('$(NativeOut)\ext4core.dll')" Text="ext4core.dll not found: run native\build.cmd first." />
+  </Target>
+
+</Project>

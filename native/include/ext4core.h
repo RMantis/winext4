@@ -1,0 +1,183 @@
+/*
+ * ext4core - small, flat C API over libext2fs for the WinExt4 GUI.
+ *
+ * All functions are serialised internally per filesystem handle, so callers
+ * may use one handle from several threads.  Paths and names are UTF-8.
+ * Return values: 0 on success, otherwise an error code that can be turned
+ * into text with e4_strerror().  Codes below E4_ERRNO_MAX are POSIX errno
+ * values (ENOENT, EEXIST, ...); anything else is a libext2fs errcode_t.
+ */
+#ifndef EXT4CORE_H
+#define EXT4CORE_H
+
+#include <stdint.h>
+#include <wchar.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifdef EXT4CORE_BUILD
+#define E4_API __declspec(dllexport)
+#else
+#define E4_API __declspec(dllimport)
+#endif
+
+#define E4_ERRNO_MAX 1000
+
+/* Our own error codes, kept in the errno range. */
+#define E4_EVOLUME_LOCK 900 /* volume in use, cannot lock it for writing */
+#define E4_ENOTEXT 901      /* no ext2/3/4 superblock found */
+#define E4_EUNSUPP_RW 902   /* filesystem has features we refuse to write */
+#define E4_ENEEDS_FSCK 903  /* filesystem marked with errors */
+
+typedef struct e4_fs e4_fs;
+
+/* e4_open flags */
+#define E4_OPEN_RW 0x1          /* open for writing (locks the volume) */
+#define E4_OPEN_NO_RECOVERY 0x2 /* RW: don't replay a dirty journal (fails instead) */
+
+typedef struct e4_info {
+	char label[20];
+	char uuid[40];
+	char last_mounted[68];
+	uint32_t block_size;
+	uint32_t inode_size;
+	uint64_t blocks_count;
+	uint64_t free_blocks;
+	uint64_t reserved_blocks;
+	uint32_t inodes_count;
+	uint32_t free_inodes;
+	uint32_t feature_compat;
+	uint32_t feature_incompat;
+	uint32_t feature_ro_compat;
+	uint32_t state;           /* s_state: 1 = clean, 2 = errors */
+	int32_t read_write;       /* opened RW */
+	int32_t needs_recovery;   /* journal has unreplayed transactions */
+	int32_t journal_replayed; /* we replayed the journal while opening RW */
+	int32_t has_journal;
+	int64_t mount_time;       /* unix seconds */
+	int64_t write_time;
+	char rw_blocker[160];     /* non-empty: why RW is refused */
+	char warnings[256];       /* human readable notes (unchecked fs, ...) */
+} e4_info;
+
+typedef struct e4_stat {
+	uint32_t ino;
+	uint32_t mode;  /* Linux st_mode, including file type bits */
+	uint32_t uid;
+	uint32_t gid;
+	uint32_t links;
+	uint32_t flags; /* ext4 i_flags */
+	uint64_t size;
+	uint64_t alloc_size; /* bytes actually allocated */
+	int64_t atime_sec, mtime_sec, ctime_sec, crtime_sec; /* crtime 0 = n/a */
+	uint32_t atime_nsec, mtime_nsec, ctime_nsec, crtime_nsec;
+	uint32_t generation;
+	uint32_t reserved;
+} e4_stat;
+
+/* Linux file type bits (st_mode & 0170000) */
+#define E4_S_IFMT 0170000
+#define E4_S_IFSOCK 0140000
+#define E4_S_IFLNK 0120000
+#define E4_S_IFREG 0100000
+#define E4_S_IFBLK 0060000
+#define E4_S_IFDIR 0040000
+#define E4_S_IFCHR 0020000
+#define E4_S_IFIFO 0010000
+
+/* e4_set_attr mask */
+#define E4_SET_MODE 0x01   /* permission bits only (07777) */
+#define E4_SET_UID 0x02
+#define E4_SET_GID 0x04
+#define E4_SET_ATIME 0x08
+#define E4_SET_MTIME 0x10
+#define E4_SET_CTIME 0x20
+#define E4_SET_CRTIME 0x40
+
+typedef struct e4_times {
+	int64_t atime_sec, mtime_sec, ctime_sec, crtime_sec;
+	uint32_t atime_nsec, mtime_nsec, ctime_nsec, crtime_nsec;
+} e4_times;
+
+/* Return non-zero to stop the iteration. */
+typedef int (__cdecl *e4_dir_cb)(void *ctx, const char *name, int name_len,
+				 uint32_t ino, int file_type);
+
+/* ---- filesystem lifetime ---- */
+E4_API int e4_open(const wchar_t *path, uint64_t offset, uint64_t length,
+		   uint32_t flags, e4_fs **out);
+E4_API int e4_close(e4_fs *fs);
+E4_API int e4_get_info(e4_fs *fs, e4_info *info);
+E4_API int e4_flush(e4_fs *fs);
+
+/* ---- lookup / metadata ---- */
+E4_API int e4_lookup(e4_fs *fs, const char *path, uint32_t *ino);
+E4_API int e4_lookup_child(e4_fs *fs, uint32_t dir, const char *name,
+			   uint32_t *ino);
+/* Resolve symlink @ino found in directory @dir (absolute links are taken
+ * relative to the filesystem root).  Non-links resolve to themselves. */
+E4_API int e4_follow(e4_fs *fs, uint32_t dir, uint32_t ino, uint32_t *target);
+E4_API int e4_stat_ino(e4_fs *fs, uint32_t ino, e4_stat *st);
+E4_API int e4_readdir(e4_fs *fs, uint32_t dir, e4_dir_cb cb, void *ctx);
+E4_API int e4_readlink(e4_fs *fs, uint32_t ino, char *buf, uint32_t buf_size,
+		       uint32_t *len);
+E4_API int e4_statfs(e4_fs *fs, uint64_t *total_bytes, uint64_t *free_bytes,
+		     uint64_t *avail_bytes);
+
+/* ---- data ---- */
+E4_API int e4_read(e4_fs *fs, uint32_t ino, uint64_t offset, void *buf,
+		   uint32_t len, uint32_t *got);
+E4_API int e4_write(e4_fs *fs, uint32_t ino, uint64_t offset,
+		    const void *buf, uint32_t len, uint32_t *written);
+E4_API int e4_set_size(e4_fs *fs, uint32_t ino, uint64_t size);
+
+/* ---- namespace changes ---- */
+E4_API int e4_create(e4_fs *fs, uint32_t dir, const char *name, uint32_t mode,
+		     uint32_t uid, uint32_t gid, uint32_t *ino);
+E4_API int e4_mkdir(e4_fs *fs, uint32_t dir, const char *name, uint32_t mode,
+		    uint32_t uid, uint32_t gid, uint32_t *ino);
+E4_API int e4_symlink(e4_fs *fs, uint32_t dir, const char *name,
+		      const char *target, uint32_t uid, uint32_t gid,
+		      uint32_t *ino);
+E4_API int e4_unlink(e4_fs *fs, uint32_t dir, const char *name);
+E4_API int e4_rmdir(e4_fs *fs, uint32_t dir, const char *name);
+E4_API int e4_rename(e4_fs *fs, uint32_t src_dir, const char *src_name,
+		     uint32_t dst_dir, const char *dst_name, int replace);
+E4_API int e4_set_attr(e4_fs *fs, uint32_t ino, uint32_t mask, uint32_t mode,
+		       uint32_t uid, uint32_t gid, const e4_times *times);
+
+/* ---- devices and images ---- */
+typedef struct e4_part {
+	wchar_t device[96];   /* path to pass to e4_open */
+	wchar_t lock_path[96]; /* informational: volume device that gets locked */
+	uint64_t offset;      /* pass to e4_open */
+	uint64_t length;      /* pass to e4_open */
+	int32_t disk_number;  /* -1 for image files */
+	int32_t partition_number; /* 0 = whole disk / whole image */
+	int32_t bus_type;     /* STORAGE_BUS_TYPE (7 = USB), -1 for images */
+	int32_t removable;
+	int32_t is_ext;       /* ext2/3/4 superblock found */
+	int32_t ext_version;  /* 2, 3 or 4 (best guess from features) */
+	char label[20];
+	char uuid[40];
+	char model[128];      /* disk vendor + product */
+	uint64_t disk_size;
+} e4_part;
+
+typedef int (__cdecl *e4_part_cb)(void *ctx, const e4_part *part);
+
+/* Physical disks (needs administrator rights). */
+E4_API int e4_enum_disks(e4_part_cb cb, void *ctx);
+/* Raw image (.img): whole-filesystem image or an MBR/GPT disk image. */
+E4_API int e4_enum_image(const wchar_t *path, e4_part_cb cb, void *ctx);
+
+E4_API const char *e4_strerror(int code);
+E4_API const char *e4_version(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

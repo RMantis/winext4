@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Mounts a test image through WinFsp and exercises it with plain Win32 file APIs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <NativeOut>$(MSBuildThisFileDirectory)..\..\native\build\Release</NativeOut>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\WinExt4\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\WinExt4\Mount\*.cs" Link="Mount\%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\WinExt4\Native\*.cs" Link="Native\%(Filename)%(Extension)" />
+    <Reference Include="winfsp-msil">
+      <HintPath>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\WinFsp\bin\winfsp-msil.dll</HintPath>
+    </Reference>
+    <None Include="$(NativeOut)\ext4core.dll" Link="ext4core.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
