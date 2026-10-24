@@ -142,7 +142,8 @@ static int run(int argc, char **argv)
 	if (argc < 4)
 		return 2;
 
-	rw = strcmp(cmd, "info") && strcmp(cmd, "ls") && strcmp(cmd, "cat");
+	rw = strcmp(cmd, "info") && strcmp(cmd, "ls") && strcmp(cmd, "cat") &&
+	     strcmp(cmd, "super");
 	err = open_fs(argv[2], argv[3], rw, &fs);
 	if (err)
 		return fail("open", err);
@@ -225,6 +226,27 @@ static int run(int argc, char **argv)
 		if (!err)
 			err = e4_symlink(fs, dir, argv[5], argv[6], 1000, 1000,
 					 &ino);
+	} else if (!strcmp(cmd, "super")) {
+		e4_super s;
+		e4_counts c;
+
+		e4_get_super(fs, &s);
+		printf("mkfs=%lld mnt=%u/%d interval=%u errors=%u opts=0x%x resuid=%u resgid=%u "
+		       "groups=%u journal=%u/%llu dirs=%u err=%u csum_seed=%u uuid_change=%u hash_seed=%s\n",
+		       (long long) s.mkfs_time, s.mnt_count, s.max_mnt_count, s.check_interval,
+		       s.errors_behavior, s.default_mount_opts, s.reserved_uid, s.reserved_gid,
+		       s.group_count, s.journal_inum, (unsigned long long) s.journal_size,
+		       s.dir_count, s.error_count, s.has_csum_seed, s.uuid_change, s.hash_seed);
+		err = e4_count_inodes(fs, NULL, NULL, &c);
+		printf("files=%llu dirs=%llu links=%llu special=%llu bytes=%llu\n",
+		       (unsigned long long) c.regular, (unsigned long long) c.directories,
+		       (unsigned long long) c.symlinks, (unsigned long long) c.special,
+		       (unsigned long long) c.regular_bytes);
+	} else if (!strcmp(cmd, "tune") && argc == 6) {
+		/* e4cli tune <dev> <off> <field number> <value or text> */
+		const char *v = argv[5];
+
+		err = e4_set_super(fs, atoi(argv[4]), _strtoui64(v, NULL, 0), v);
 	} else if (!strcmp(cmd, "trunc") && argc == 6) {
 		err = e4_lookup(fs, argv[4], &ino);
 		if (!err)

@@ -15,6 +15,7 @@
 #include "uuid/uuid.h"
 #include "ext4core.h"
 #include "winio.h"
+#include "internal.h"
 
 /* debugfs/journal.c */
 errcode_t ext2fs_check_ext3_journal(ext2_filsys fs);
@@ -286,6 +287,13 @@ static int writable(e4_fs *f)
 {
 	return f->rw && (f->fs->flags & EXT2_FLAG_RW);
 }
+
+/* for the other API files (internal.h) */
+void e4_lock(e4_fs *f) { LOCK(f); }
+void e4_unlock(e4_fs *f) { UNLOCK(f); }
+ext2_filsys e4_filsys(e4_fs *f) { return f->fs; }
+int e4_writable(e4_fs *f) { return writable(f); }
+int e4_xlate(errcode_t err) { return xlate(err); }
 
 /* ------------------------------------------------------------------ */
 /* open / close                                                        */

@@ -651,12 +651,66 @@ public partial class MainWindow : Window
         var s = _contextSource.Source;
         bool disk = !s.IsImage;
         bool busy = _operation is not null;
+        ScProperties.IsEnabled = !busy;
         ScHashPartition.IsEnabled = ScExportPartition.IsEnabled = !busy && s.PartitionNumber > 0;
         ScHashDisk.Header = disk ? "Calcola hash dell'intero disco" : "Calcola hash dell'immagine intera";
         ScHashDisk.IsEnabled = !busy;
         ScExportDisk.IsEnabled = !busy && disk;
         ScWritePartition.IsEnabled = !busy && disk && s.PartitionNumber > 0;
         ScWriteDisk.IsEnabled = !busy && disk;
+    }
+
+    private async void OnSourceProperties(object sender, RoutedEventArgs e)
+    {
+        if (_contextSource is { } item) await ShowPartitionPropertiesAsync(item);
+    }
+
+    /// <summary>Properties dialog; applies partition-table edits and refreshes after filesystem edits.</summary>
+    private async Task ShowPartitionPropertiesAsync(SourceItem item)
+    {
+        var s = item.Source;
+        bool isCurrent = ReferenceEquals(item, _current) && _vol is not null;
+        Ext4Volume? temp = null;
+        if (!isCurrent && s.IsExt)
+        {
+            try { temp = await Task.Run(() => Ext4Volume.Open(s, false)); }
+            catch (Ext4Exception) { }
+        }
+        var dlg = new PartitionPropertiesDialog(s, isCurrent ? _vol : temp) { Owner = this };
+        dlg.ShowDialog();
+        temp?.Dispose();
+        if (dlg.PartitionEdit is null && !dlg.FilesystemChanged) return;
+
+        bool rw = isCurrent && _vol!.ReadWrite;
+        string path = _cwdPath;
+        bool reopen = isCurrent || (_current is not null && _current.Source.Container == s.Container);
+        if (reopen) await CloseVolumeAsync();
+        if (dlg.PartitionEdit is { } pe)
+        {
+            try
+            {
+                PartitionTypes.Edit(s, pe.GptType, pe.MbrType, pe.GptName, pe.GptAttributes);
+                SetStatus("Tabella delle partizioni aggiornata.");
+            }
+            catch (Ext4Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Partizione", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        if (reopen)
+        {
+            await RefreshSourcesAfterTableChangeAsync(s, rw);
+            if (_vol is not null && path != "/") await NavigateAsync(path);
+        }
+        else
+        {
+            if (s.IsImage && s.ImagePath is { } img)
+            {
+                _imageSources.RemoveAll(x => x.ImagePath == img);
+                try { _imageSources.AddRange(SourceScanner.ScanImage(img)); } catch (Ext4Exception) { }
+            }
+            await RescanAsync();
+        }
     }
 
     /// <summary>Runs a background job with the status-bar progress and cancel button.</summary>
@@ -1367,7 +1421,7 @@ public partial class MainWindow : Window
         if (_vol is null) return;
         if (FileList.SelectedItem is not EntryItem item)
         {
-            new VolumeInfoDialog(_vol, _current?.Source) { Owner = this }.ShowDialog();
+            if (_current is not null) await ShowPartitionPropertiesAsync(_current);
             return;
         }
         var dlg = new PropertiesDialog(_vol, item, _cwdPath) { Owner = this };

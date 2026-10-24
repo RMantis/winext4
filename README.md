@@ -36,6 +36,14 @@ Le immagini si aprono in tre modi: con «Apri immagine», trascinando il file ne
 - immagini disco con tabella MBR (anche partizioni logiche);
 - immagini disco con tabella GPT.
 
+### Proprietà della partizione
+
+Pulsante ⓘ (senza file selezionati) oppure clic destro su una partizione → **Proprietà…**:
+- **Generale**: spazio occupato/libero/riservato con grafico, inode, cartelle e conteggio rapido dei file (scansione delle tabelle degli inode, senza percorrere le cartelle);
+- **Partizione**: tabella, GUID del disco, PARTUUID, tipo, stato delle due copie GPT; si possono cambiare **nome**, **tipo** e **attributi** GPT (per esempio «nessuna lettera di unità», che impedisce a Windows di assegnarle una lettera) o il tipo MBR;
+- **Filesystem**: funzionalità con spiegazione, journal, contatori, date ed errori registrati; con la scrittura sbloccata si cambiano **etichetta**, **UUID**, **spazio riservato** a root e chi può usarlo, controlli periodici, comportamento in caso di errore e opzioni di montaggio predefinite (come `tune2fs`/`e2label`). Per i filesystem con `metadata_csum` il cambio di UUID richiede prima `metadata_csum_seed`, che la finestra propone di attivare;
+- **Avanzate**: riepilogo stile `dumpe2fs -h` da copiare.
+
 ### Hash, immagini e scrittura su disco
 
 Clic destro su una partizione nell'elenco a sinistra:
@@ -140,7 +148,6 @@ third_party/       e2fsprogs (sottomodulo)
 Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.md):
 - azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
-- proprietà complete della partizione, con modifica di etichetta, UUID, spazio riservato, nome e tipo della partizione;
 - fsck integrato;
 - modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.
 

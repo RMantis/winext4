@@ -187,6 +187,53 @@ internal static unsafe class Ext4Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
     public static extern int e4_enum_image(string path, delegate* unmanaged[Cdecl]<IntPtr, Part*, int> cb, IntPtr ctx);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Super
+    {
+        public long mkfs_time, last_check, first_error_time, last_error_time;
+        public uint mnt_count;
+        public int max_mnt_count;
+        public uint check_interval;
+        public uint errors_behavior;
+        public uint default_mount_opts;
+        public uint reserved_uid, reserved_gid;
+        public uint creator_os, rev_level, minor_rev;
+        public uint blocks_per_group, inodes_per_group, group_count;
+        public uint journal_inum;
+        public ulong journal_size;
+        public uint dir_count;
+        public uint error_count;
+        public uint first_error_ino, last_error_ino;
+        public uint first_error_line, last_error_line;
+        public ulong first_error_block, last_error_block;
+        public fixed byte first_error_func[36];
+        public fixed byte last_error_func[36];
+        public ulong kbytes_written;
+        public uint log_groups_per_flex;
+        public uint flags;
+        public fixed byte mount_opts[68];
+        public fixed byte hash_seed[40];
+        public uint has_csum_seed;
+        public uint uuid_change;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Counts
+    {
+        public ulong regular, directories, symlinks, special;
+        public ulong regular_bytes;
+        public ulong inodes_scanned;
+    }
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_get_super(IntPtr fs, out Super super);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_set_super(IntPtr fs, int field, ulong value, byte* text);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int e4_count_inodes(IntPtr fs, int* cancel, ulong* progress, out Counts counts);
+
     public const uint RawWrite = 0x1;
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]

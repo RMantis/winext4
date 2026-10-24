@@ -113,7 +113,9 @@ public sealed class Ext4VolumeInfo
     public string Warnings { get; init; } = "";
     public DateTime? LastMount { get; init; }
     public DateTime? LastWrite { get; init; }
+    public uint FeatureCompat { get; init; }
     public uint FeatureIncompat { get; init; }
+    public uint FeatureRoCompat { get; init; }
 
     public string Kind =>
         (FeatureIncompat & (0x40 | 0x80 | 0x200)) != 0 ? "ext4" : HasJournal ? "ext3" : "ext2";

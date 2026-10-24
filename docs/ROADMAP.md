@@ -12,7 +12,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 | 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
 | 7 | ✅ «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
 | 8 | ✅ Anteprima di testo e immagini nella finestra | — | piccola |
-| 9 | Proprietà della partizione: tutte le informazioni e modifica dei parametri modificabili | 2 per i GUID | media |
+| 9 | ✅ Proprietà della partizione: tutte le informazioni e modifica dei parametri modificabili | 2 per i GUID | media |
 
 I punti 7, 8 e 9 sono miglioramenti dell'interfaccia indipendenti dagli altri: si possono fare in qualsiasi momento, anche per primi.
 
@@ -335,7 +335,9 @@ Vedere al volo il contenuto dei file selezionati, senza estrarli né aprire altr
 
 ---
 
-## 9. Proprietà della partizione
+## 9. ✅ Proprietà della partizione
+
+*Implementato.* Il test su disco reale (`tests/vhd_tools_test.ps1`, da eseguire come amministratore) è da completare.
 
 ### Obiettivo
 

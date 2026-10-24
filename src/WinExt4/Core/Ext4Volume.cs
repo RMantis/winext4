@@ -87,7 +87,9 @@ public sealed unsafe class Ext4Volume : IDisposable
             Warnings = Ext4Native.Utf8(i.warnings, 256),
             LastMount = i.mount_time > 0 ? DateTimeOffset.FromUnixTimeSeconds(i.mount_time).LocalDateTime : null,
             LastWrite = i.write_time > 0 ? DateTimeOffset.FromUnixTimeSeconds(i.write_time).LocalDateTime : null,
+            FeatureCompat = i.feature_compat,
             FeatureIncompat = i.feature_incompat,
+            FeatureRoCompat = i.feature_ro_compat,
         };
     }
 
@@ -371,6 +373,42 @@ public sealed unsafe class Ext4Volume : IDisposable
     public void SetAttributes(uint ino, uint mask, uint mode = 0, uint uid = 0, uint gid = 0,
         DateTime? atime = null, DateTime? mtime = null, DateTime? ctime = null, DateTime? crtime = null) =>
         Ext4Exception.Check(TrySetAttributes(ino, mask, mode, uid, gid, atime, mtime, ctime, crtime), "Modifica attributi");
+
+    public SuperInfo GetSuper()
+    {
+        Ext4Exception.Check(Ext4Native.e4_get_super(Fs, out var s));
+        return SuperInfo.From(s);
+    }
+
+    /// <summary>tune2fs-style change of one superblock field (needs read-write).</summary>
+    public void SetSuper(SuperField field, ulong value = 0, string? text = null)
+    {
+        byte[]? z = text is null ? null : Z(text);
+        fixed (byte* p = z)
+            Ext4Exception.Check(Ext4Native.e4_set_super(Fs, (int)field, value, p), "Modifica del filesystem");
+    }
+
+    /// <summary>Counts files by type scanning the inode tables (fast, no directory walk).</summary>
+    public InodeCounts CountInodes(CancellationToken cancel, IProgress<double>? progress = null)
+    {
+        // Native memory: the scan polls the flag and updates the position while running.
+        IntPtr mem = (IntPtr)NativeMemory.AllocZeroed(16);
+        try
+        {
+            uint total = GetInfo().InodesCount;
+            using var reg = cancel.Register(() => Marshal.WriteInt32(mem, 1));
+            using var timer = progress is null ? null
+                : new Timer(_ => progress.Report(total > 0 ? (double)Marshal.ReadInt64(mem, 8) / total : 0), null, 200, 200);
+            int err = Ext4Native.e4_count_inodes(Fs, (int*)mem, (ulong*)(mem + 8), out var c);
+            cancel.ThrowIfCancellationRequested();
+            Ext4Exception.Check(err, "Conteggio dei file");
+            return new InodeCounts(c.regular, c.directories, c.symlinks, c.special, c.regular_bytes);
+        }
+        finally
+        {
+            NativeMemory.Free((void*)mem);
+        }
+    }
 
     public static string Version
     {

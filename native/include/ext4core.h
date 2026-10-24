@@ -112,6 +112,63 @@ E4_API int e4_close(e4_fs *fs);
 E4_API int e4_get_info(e4_fs *fs, e4_info *info);
 E4_API int e4_flush(e4_fs *fs);
 
+/* Everything else of interest in the superblock (dumpe2fs -h style). */
+typedef struct e4_super {
+	int64_t mkfs_time, last_check, first_error_time, last_error_time;
+	uint32_t mnt_count;
+	int32_t max_mnt_count;      /* -1 / 0 = no limit */
+	uint32_t check_interval;    /* seconds, 0 = none */
+	uint32_t errors_behavior;   /* 1 continue, 2 remount-ro, 3 panic */
+	uint32_t default_mount_opts;
+	uint32_t reserved_uid, reserved_gid;
+	uint32_t creator_os, rev_level, minor_rev;
+	uint32_t blocks_per_group, inodes_per_group, group_count;
+	uint32_t journal_inum;
+	uint64_t journal_size;
+	uint32_t dir_count;         /* from the group descriptors */
+	uint32_t error_count;
+	uint32_t first_error_ino, last_error_ino;
+	uint32_t first_error_line, last_error_line;
+	uint64_t first_error_block, last_error_block;
+	char first_error_func[36], last_error_func[36];
+	uint64_t kbytes_written;
+	uint32_t log_groups_per_flex;
+	uint32_t flags;
+	char mount_opts[68];
+	char hash_seed[40];
+	uint32_t has_csum_seed;
+	uint32_t uuid_change;       /* 0 ok, 1 needs csum_seed, 2 impossible (stable_inodes) */
+} e4_super;
+
+E4_API int e4_get_super(e4_fs *fs, e4_super *out);
+
+/* e4_set_super fields (tune2fs equivalents in brackets) */
+#define E4_SUPER_LABEL 1           /* text [e2label] */
+#define E4_SUPER_UUID 2            /* text: UUID or "random" [-U] */
+#define E4_SUPER_RESERVED_BLOCKS 3 /* value [-r] */
+#define E4_SUPER_RESERVED_UID 4    /* value [-u] */
+#define E4_SUPER_RESERVED_GID 5    /* value [-g] */
+#define E4_SUPER_MAX_MNT_COUNT 6   /* value as int32, -1 = off [-c] */
+#define E4_SUPER_CHECK_INTERVAL 7  /* seconds [-i] */
+#define E4_SUPER_MNT_COUNT 8       /* value [-C] */
+#define E4_SUPER_ERRORS 9          /* 1/2/3 [-e] */
+#define E4_SUPER_DEFAULT_MOUNT_OPTS 10 /* bitmask [-o] */
+#define E4_SUPER_LAST_MOUNTED 11   /* text, "" clears [-M] */
+#define E4_SUPER_ENABLE_CSUM_SEED 12 /* [-O metadata_csum_seed] */
+
+/* Needs a read-write handle. */
+E4_API int e4_set_super(e4_fs *fs, int field, uint64_t value, const char *text);
+
+typedef struct e4_counts {
+	uint64_t regular, directories, symlinks, special;
+	uint64_t regular_bytes;
+	uint64_t inodes_scanned;
+} e4_counts;
+
+/* Fast count by scanning the inode tables; *cancel may be set from another thread. */
+E4_API int e4_count_inodes(e4_fs *fs, volatile int32_t *cancel, volatile uint64_t *progress,
+			   e4_counts *out);
+
 /* ---- lookup / metadata ---- */
 E4_API int e4_lookup(e4_fs *fs, const char *path, uint32_t *ino);
 E4_API int e4_lookup_child(e4_fs *fs, uint32_t dir, const char *name,

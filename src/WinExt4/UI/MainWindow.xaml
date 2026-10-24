@@ -197,6 +197,8 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ContextMenu>
                             <ContextMenu>
+                                <MenuItem x:Name="ScProperties" Header="Proprietà…" Click="OnSourceProperties" FontWeight="SemiBold" />
+                                <Separator />
                                 <MenuItem x:Name="ScHashPartition" Header="Calcola hash della partizione" Click="OnHashPartition" />
                                 <MenuItem x:Name="ScHashDisk" Header="Calcola hash dell'intero disco" Click="OnHashDisk" />
                                 <Separator />

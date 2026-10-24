@@ -105,7 +105,7 @@ public static class PartitionTypes
         ulong? gptAttributes = null)
     {
         var e = new Ext4Native.PartEdit();
-        if (gptType is not null) { e.mask |= Ext4Native.EditGptType; Copy(gptType, e.gpt_type, 40); }
+        if (!string.IsNullOrEmpty(gptType)) { e.mask |= Ext4Native.EditGptType; Copy(gptType, e.gpt_type, 40); }
         if (mbrType is { } t) { e.mask |= Ext4Native.EditMbrType; e.mbr_type = t; }
         if (gptName is not null) { e.mask |= Ext4Native.EditGptName; Copy(gptName, e.gpt_name, 80); }
         if (gptAttributes is { } a) { e.mask |= Ext4Native.EditGptAttributes; e.gpt_attributes = a; }
