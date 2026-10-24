@@ -21,15 +21,16 @@ WinFsp serve solo per il pulsante «Monta su Windows». Tutto il resto funziona 
 3. Puoi:
    - **sfogliare** i file, con permessi `rwx`, uid:gid e link simbolici;
    - **Estrai** per copiare file o cartelle in Windows;
-   - fare doppio clic su un file per aprirne una copia temporanea.
+   - fare doppio clic su un file per aprirne una copia temporanea, oppure usare **Apri con…** nel menu contestuale (i programmi registrati per quel tipo di file, con le loro icone, più «Scegli un'altra app…»).
 4. **Sblocca scrittura** riapre la partizione in lettura/scrittura:
    - la partizione viene bloccata e smontata per Windows, così nessun altro programma la tocca;
    - se il journal contiene transazioni non applicate (disco staccato da Linux senza smontarlo), vengono riprodotte prima di scrivere;
    - a questo punto puoi importare file e cartelle (anche trascinandoli nella finestra), rinominare, eliminare, creare cartelle e cambiare permessi e proprietario.
+   - i file aperti con un altro programma sono copie modificabili: quando il programma salva, WinExt4 chiede se aggiornare il file sul disco ext, mantenendo proprietario e permessi Linux. Alla chiusura del volume le copie temporanee vengono eliminate, e se qualcuna non è stata riportata te lo chiede prima.
 5. **Monta su Windows** assegna una lettera di unità e il disco si usa da Esplora risorse e da qualsiasi programma. Prima del montaggio una finestra spiega come vengono trattati permessi e attributi e chiede proprietario e permessi da dare ai nuovi file.
 6. **Chiudi** (oppure torna in sola lettura) **prima di scollegare** un disco aperto in scrittura.
 
-Le immagini si aprono in tre modi: con «Apri immagine», trascinando il file nella finestra, oppure con «Apri con → WinExt4». Sono supportati:
+Le immagini si aprono in tre modi: con «Apri immagine», trascinando il file nella finestra, oppure da Esplora risorse con «Apri con WinExt4». Quest'ultima voce si attiva in *Impostazioni → Mostra WinExt4 in «Apri con»*: la registrazione è per il solo utente e non cambia il programma predefinito di nessun tipo di file. Sono supportati:
 - filesystem «nudi», creati con `mkfs.ext4 file.img`;
 - immagini disco con tabella MBR (anche partizioni logiche);
 - immagini disco con tabella GPT.
@@ -121,7 +122,6 @@ Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.m
 - controllo dei GUID delle partizioni;
 - azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
-- «Apri con…» per i file ext e WinExt4 nel menu «Apri con» di Windows;
 - anteprima di testo e immagini;
 - proprietà complete della partizione, con modifica di etichetta, UUID, spazio riservato, nome e tipo della partizione;
 - fsck integrato;

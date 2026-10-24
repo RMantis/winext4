@@ -1,6 +1,6 @@
 # Roadmap
 
-Idee in ordine di priorità suggerita. L'ordine segue il rapporto tra rischio e beneficio: prima le funzioni che riusano il livello di I/O già esistente, per ultima quella che cambia di più il modello di scrittura.
+Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rapporto tra rischio e beneficio: prima le funzioni che riusano il livello di I/O già esistente, per ultima quella che cambia di più il modello di scrittura.
 
 | # | Funzione | Dipende da | Dimensione |
 |---|---|---|---|
@@ -10,7 +10,7 @@ Idee in ordine di priorità suggerita. L'ordine segue il rapporto tra rischio e 
 | 4 | Aprire immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle | 6 per scriverci | media |
 | 5 | fsck integrato | — | media |
 | 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
-| 7 | «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
+| 7 | ✅ «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
 | 8 | Anteprima di testo e immagini nella finestra | — | piccola |
 | 9 | Proprietà della partizione: tutte le informazioni e modifica dei parametri modificabili | 2 per i GUID | media |
 
@@ -262,7 +262,9 @@ Sorgente + delta → nuovo `.img`, con il `.md5` del punto 1. La sorgente resta 
 
 ---
 
-## 7. «Apri con…»
+## 7. ✅ «Apri con…»
+
+*Implementato.* Resta da fare: aprire più file insieme con un singolo programma (oggi ognuno viene aperto separatamente).
 
 ### Dentro WinExt4: aprire un file ext con un programma a scelta
 

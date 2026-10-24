@@ -23,6 +23,9 @@ public partial class MainWindow : Window
     private readonly List<Ext4Source> _imageSources = new();
     private readonly HashSet<string> _knownKeys = new();
     private readonly DispatcherTimer _rescanTimer;
+    private readonly TempCopies _temp = new();
+    private bool _writeBackAlways;
+    private bool _askingWriteBack;
 
     private Ext4Volume? _vol;
     private SourceItem? _current;
@@ -49,6 +52,7 @@ public partial class MainWindow : Window
         ChkAllPartitions.IsChecked = _settings.ShowAllPartitions;
         _rescanTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
         _rescanTimer.Tick += (_, _) => { _rescanTimer.Stop(); _ = RescanAsync(); };
+        _temp.Modified += copy => Dispatcher.BeginInvoke(() => OnTempCopyModified(copy));
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
         UpdateUi();
@@ -412,6 +416,7 @@ public partial class MainWindow : Window
 
     private async Task CloseVolumeAsync()
     {
+        await SettleTempCopiesAsync();
         _mount?.Dispose();
         _mount = null;
         var vol = _vol;
@@ -665,7 +670,9 @@ public partial class MainWindow : Window
 
     private async void OnContextOpen(object sender, RoutedEventArgs e)
     {
-        if (FileList.SelectedItem is EntryItem item) await OpenItemAsync(item);
+        var sel = Selected();
+        if (sel.Count == 1) await OpenItemAsync(sel[0]);
+        else if (sel.Count > 1) await OpenFilesAsync(sel, null);
     }
 
     private async Task OpenItemAsync(EntryItem item)
@@ -681,22 +688,136 @@ public partial class MainWindow : Window
             SetStatus($"Il link punta a «{item.LinkTarget}», che non esiste in questo filesystem.");
             return;
         }
-        // Open a temporary copy with the associated Windows program.
-        string dir = Path.Combine(Path.GetTempPath(), "WinExt4", Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(dir);
-        bool ok = await RunTransferAsync("Apertura", t => t.Export(_cwdIno, new[] { item.Entry }, dir), refresh: false);
-        string file = Path.Combine(dir, LinuxNames.ForExport(item.Entry.Name));
-        if (!ok || !File.Exists(file)) return;
+        await OpenFilesAsync(new[] { item }, null);
+    }
+
+    /// <summary>
+    /// Extracts the files to temporary copies and opens them with their
+    /// associated program, a chosen <paramref name="handler"/>, or the
+    /// system "Open with" dialog when <paramref name="chooser"/> is set.
+    /// </summary>
+    private async Task OpenFilesAsync(IList<EntryItem> items, OpenWithHandler? handler, bool chooser = false)
+    {
+        if (_vol is not { } vol) return;
+        var files = items.Where(i => !i.IsDirectoryLike && (!i.IsLink || i.TargetStat is not null)).ToList();
+        if (files.Count == 0) return;
+        string dir = _cwdPath;
+        List<TempCopy> copies;
         try
         {
-            File.SetAttributes(file, FileAttributes.ReadOnly);
-            Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
-            SetStatus("Aperta una copia temporanea in sola lettura: le modifiche non tornano nel disco ext (usa «Importa» o monta il disco).");
+            SetStatus(files.Count == 1 ? $"Apertura di {files[0].Entry.Name}…" : $"Apertura di {files.Count} file…");
+            copies = await Task.Run(() => files.Select(f =>
+                _temp.Extract(vol, f.IsLink ? f.TargetIno : f.Entry.Ino, Combine(dir, f.Entry.Name), f.Entry.Name)).ToList());
         }
-        catch (Win32Exception ex)
+        catch (Exception ex) when (ex is Ext4Exception or IOException or UnauthorizedAccessException)
         {
             SetStatus(ex.Message);
+            return;
         }
+        foreach (var c in copies)
+        {
+            try
+            {
+                if (handler is not null) ShellOpen.Invoke(handler, c.LocalPath);
+                else if (chooser) ShellOpen.ShowChooser(new WindowInteropHelper(this).Handle, c.LocalPath);
+                else Process.Start(new ProcessStartInfo(c.LocalPath) { UseShellExecute = true });
+            }
+            catch (Exception ex) when (ex is Win32Exception or COMException)
+            {
+                SetStatus($"{Path.GetFileName(c.LocalPath)}: {ex.Message}");
+            }
+        }
+        SetStatus(vol.ReadWrite
+            ? "Aperta una copia temporanea: quando la salvi ti verrà chiesto se aggiornare il file sul disco ext."
+            : "Aperta una copia temporanea in sola lettura: per modificare il file sblocca prima la scrittura.");
+    }
+
+    private async void OnTempCopyModified(TempCopy copy)
+    {
+        if (_vol is not { ReadWrite: true } vol || _askingWriteBack) return;
+        if (!_writeBackAlways)
+        {
+            _askingWriteBack = true;
+            if (!IsVisible) ShowFromBackground();
+            var d = new WriteBackDialog(copy.ExtPath) { Owner = this };
+            d.ShowDialog();
+            _askingWriteBack = false;
+            if (d.Choice == WriteBackChoice.Ignore) return;
+            if (d.Choice == WriteBackChoice.Always) _writeBackAlways = true;
+        }
+        if (vol.TryStat(copy.Ino, out var st) && st!.ModifyTime != copy.ExtModified &&
+            MessageBox.Show(this, $"«{copy.ExtPath}» è stato modificato anche sul disco ext dopo l'apertura.\nSovrascriverlo con la copia salvata?",
+                "Conflitto", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+        try
+        {
+            await Task.Run(() => TempCopies.WriteBack(vol, copy));
+            SetStatus($"«{copy.ExtPath}» aggiornato sul disco ext.");
+            if (ParentOf(copy.ExtPath) == _cwdPath) await NavigateAsync(_cwdPath);
+        }
+        catch (Exception ex) when (ex is Ext4Exception or IOException)
+        {
+            MessageBox.Show(this, ex.Message, "Aggiornamento non riuscito", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>Before closing: offer to write back saved copies that were not synced yet.</summary>
+    private async Task SettleTempCopiesAsync()
+    {
+        var vol = _vol;
+        var pending = _temp.All.Where(c => c.Writable && c.LocallyModified).ToList();
+        if (vol is { ReadWrite: true } && pending.Count > 0 &&
+            MessageBox.Show(this,
+                "Questi file aperti con altri programmi sono stati modificati ma non riportati sul disco ext:\n\n" +
+                string.Join("\n", pending.Select(c => "• " + c.ExtPath)) + "\n\nRiportarli adesso?",
+                "Modifiche non riportate", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        {
+            foreach (var c in pending)
+            {
+                try
+                {
+                    await Task.Run(() => TempCopies.WriteBack(vol, c));
+                }
+                catch (Exception ex) when (ex is Ext4Exception or IOException)
+                {
+                    MessageBox.Show(this, $"{c.ExtPath}: {ex.Message}", "Aggiornamento non riuscito");
+                }
+            }
+        }
+        _temp.Clear();
+        _writeBackAlways = false;
+    }
+
+    private async void OnOpenWithHandler(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: OpenWithHandler h }) await OpenFilesAsync(Selected(), h);
+    }
+
+    private async void OnOpenWithChooser(object sender, RoutedEventArgs e) =>
+        await OpenFilesAsync(Selected(), null, chooser: true);
+
+    private void FillOpenWithMenu()
+    {
+        CmOpenWith.Items.Clear();
+        var sel = Selected();
+        var files = sel.Where(i => !i.IsDirectoryLike).ToList();
+        CmOpenWith.IsEnabled = files.Count > 0 && files.Count == sel.Count;
+        if (!CmOpenWith.IsEnabled) return;
+        var exts = files.Select(f => Path.GetExtension(f.Entry.Name).ToLowerInvariant()).Distinct().ToList();
+        if (exts.Count == 1 && exts[0].Length > 1)
+        {
+            foreach (var h in ShellOpen.Handlers(exts[0]))
+            {
+                var mi = new MenuItem { Header = h.Name, Tag = h };
+                if (h.Icon is not null) mi.Icon = new Image { Source = h.Icon, Width = 16, Height = 16 };
+                mi.Click += OnOpenWithHandler;
+                CmOpenWith.Items.Add(mi);
+            }
+            if (CmOpenWith.Items.Count > 0) CmOpenWith.Items.Add(new Separator());
+        }
+        var choose = new MenuItem { Header = "Scegli un'altra app…" };
+        choose.Click += OnOpenWithChooser;
+        CmOpenWith.Items.Add(choose);
     }
 
     private async void OnUp(object sender, RoutedEventArgs e) => await GoUpAsync();
@@ -906,7 +1027,8 @@ public partial class MainWindow : Window
     {
         bool rw = _vol?.ReadWrite == true;
         int n = FileList.SelectedItems.Count;
-        CmOpen.IsEnabled = n == 1;
+        CmOpen.IsEnabled = n >= 1;
+        FillOpenWithMenu();
         CmExport.IsEnabled = n > 0;
         CmRename.IsEnabled = rw && n == 1;
         CmDelete.IsEnabled = rw && n > 0;

@@ -16,8 +16,8 @@ public sealed class OptionsDialog : SimpleDialog
     private readonly ComboBox? _letter;
     private readonly RadioButton _inherit, _fixed;
     private readonly TextBox _uid, _gid, _fileMode, _dirMode;
-    private readonly CheckBox _hideDots, _openExplorer, _autoOpen, _startWithWindows;
-    private readonly bool _wasAutostart;
+    private readonly CheckBox _hideDots, _openExplorer, _autoOpen, _startWithWindows, _openWith;
+    private readonly bool _wasAutostart, _wasOpenWith;
 
     public string? SelectedDriveLetter => _letter?.SelectedItem as string;
 
@@ -65,13 +65,13 @@ public sealed class OptionsDialog : SimpleDialog
         Body.Children.Add(new TextBlock { Text = "Nuovi file e cartelle creati da Windows", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 6) });
         _inherit = new RadioButton
         {
-            Content = "Stesso proprietario (uid/gid) della cartella in cui vengono creati",
+            Content = Wrap("Stesso proprietario (uid/gid) della cartella in cui vengono creati"),
             IsChecked = settings.OwnerPolicy == OwnerPolicy.InheritParent,
             Margin = new Thickness(0, 2, 0, 2),
         };
         Body.Children.Add(_inherit);
         var fixedRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-        _fixed = new RadioButton { Content = "Proprietario fisso:  uid ", IsChecked = settings.OwnerPolicy == OwnerPolicy.Fixed, VerticalAlignment = VerticalAlignment.Center };
+        _fixed = new RadioButton { Content = Wrap("Proprietario fisso:  uid "), IsChecked = settings.OwnerPolicy == OwnerPolicy.Fixed, VerticalAlignment = VerticalAlignment.Center };
         _uid = new TextBox { Text = settings.FixedUid.ToString(), Width = 60 };
         _gid = new TextBox { Text = settings.FixedGid.ToString(), Width = 60 };
         fixedRow.Children.Add(_fixed);
@@ -91,16 +91,16 @@ public sealed class OptionsDialog : SimpleDialog
         Body.Children.Add(modes);
 
         Body.Children.Add(new TextBlock { Text = "Esplora risorse", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 6) });
-        _hideDots = new CheckBox { Content = "Mostra i file che iniziano con «.» come nascosti", IsChecked = settings.HideDotFiles, Margin = new Thickness(0, 2, 0, 2) };
-        _openExplorer = new CheckBox { Content = "Apri Esplora risorse dopo il montaggio", IsChecked = settings.OpenExplorerAfterMount, Margin = new Thickness(0, 2, 0, 2) };
+        _hideDots = new CheckBox { Content = Wrap("Mostra i file che iniziano con «.» come nascosti"), IsChecked = settings.HideDotFiles, Margin = new Thickness(0, 2, 0, 2) };
+        _openExplorer = new CheckBox { Content = Wrap("Apri Esplora risorse dopo il montaggio"), IsChecked = settings.OpenExplorerAfterMount, Margin = new Thickness(0, 2, 0, 2) };
         Body.Children.Add(_hideDots);
         Body.Children.Add(_openExplorer);
 
-        _autoOpen = new CheckBox { Content = "Apri automaticamente (in sola lettura) i dischi ext appena collegati", IsChecked = settings.AutoOpenOnInsert, Margin = new Thickness(0, 2, 0, 2) };
+        _autoOpen = new CheckBox { Content = Wrap("Apri automaticamente (in sola lettura) i dischi ext appena collegati"), IsChecked = settings.AutoOpenOnInsert, Margin = new Thickness(0, 2, 0, 2) };
         _wasAutostart = !forMount && Autostart.IsEnabled;
         _startWithWindows = new CheckBox
         {
-            Content = "Avvia con Windows in background (icona nell'area di notifica, nessun prompt UAC)",
+            Content = Wrap("Avvia con Windows in background (icona nell'area di notifica, nessun prompt UAC)"),
             IsChecked = _wasAutostart,
             Margin = new Thickness(0, 2, 0, 2),
         };
@@ -110,10 +110,20 @@ public sealed class OptionsDialog : SimpleDialog
             Body.Children.Add(_autoOpen);
             Body.Children.Add(_startWithWindows);
         }
+        _wasOpenWith = !forMount && ShellIntegration.IsRegistered;
+        _openWith = new CheckBox
+        {
+            Content = Wrap("Mostra WinExt4 in «Apri con» di Esplora risorse per le immagini disco (.img, .raw…)"),
+            IsChecked = _wasOpenWith,
+            Margin = new Thickness(0, 2, 0, 2),
+        };
+        if (!forMount) Body.Children.Add(_openWith);
 
         AddButton(forMount ? "Monta" : "Salva", true, OnOk);
         AddButton("Annulla", false, (_, _) => DialogResult = false).IsCancel = true;
     }
+
+    private static TextBlock Wrap(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap };
 
     private static bool TryOctal(string s, out uint v)
     {
@@ -153,6 +163,18 @@ public sealed class OptionsDialog : SimpleDialog
                 if (autostart) Autostart.Enable(); else Autostart.Disable();
             }
             catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        bool openWith = _openWith.IsChecked == true;
+        if (_letter is null && openWith != _wasOpenWith)
+        {
+            try
+            {
+                if (openWith) ShellIntegration.Register(); else ShellIntegration.Unregister();
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or System.IO.IOException)
             {
                 MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
             }

@@ -116,6 +116,40 @@ public sealed class ConflictDialog : SimpleDialog
     }
 }
 
+public enum WriteBackChoice { Update, Always, Ignore }
+
+/// <summary>"The copy opened with another program was saved: update the ext file?"</summary>
+public sealed class WriteBackDialog : SimpleDialog
+{
+    public WriteBackChoice Choice { get; private set; } = WriteBackChoice.Ignore;
+
+    public WriteBackDialog(string extPath) : base("File modificato", 480)
+    {
+        Body.Children.Add(new TextBlock
+        {
+            Text = $"«{System.IO.Path.GetFileName(extPath)}» è stato salvato dal programma con cui l'hai aperto.",
+            TextWrapping = TextWrapping.Wrap,
+            FontWeight = FontWeights.SemiBold,
+        });
+        Body.Children.Add(new TextBlock
+        {
+            Text = $"Aggiornare il file sul disco ext ({extPath})? Proprietario e permessi Linux restano quelli attuali.",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 0),
+        });
+        AddButton("Aggiorna", true, (_, _) => Done(WriteBackChoice.Update));
+        AddButton("Aggiorna sempre", false, (_, _) => Done(WriteBackChoice.Always))
+            .ToolTip = "Aggiorna senza chiedere per il resto di questa sessione";
+        AddButton("Ignora", false, (_, _) => Done(WriteBackChoice.Ignore)).IsCancel = true;
+    }
+
+    private void Done(WriteBackChoice c)
+    {
+        Choice = c;
+        DialogResult = true;
+    }
+}
+
 public sealed class VolumeInfoDialog : SimpleDialog
 {
     public VolumeInfoDialog(Ext4Volume vol, Ext4Source? source) : base("Informazioni sul filesystem", 480)

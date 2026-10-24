@@ -17,7 +17,7 @@ public static class Autostart
 
     public static void Enable()
     {
-        string exe = Environment.ProcessPath ?? throw new InvalidOperationException("Percorso dell'eseguibile sconosciuto.");
+        string exe = ShellIntegration.Exe;
         string user = $"{Environment.UserDomainName}\\{Environment.UserName}";
         // XML instead of /SC ONLOGON flags: the defaults would kill the task
         // after 72 hours and refuse to start it on battery.

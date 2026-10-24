@@ -250,6 +250,7 @@
                         <ListView.ContextMenu>
                             <ContextMenu x:Name="FileContextMenu" Opened="OnContextMenuOpened">
                                 <MenuItem x:Name="CmOpen" Header="Apri" Click="OnContextOpen" FontWeight="SemiBold" />
+                                <MenuItem x:Name="CmOpenWith" Header="Apri con" />
                                 <MenuItem x:Name="CmExport" Header="Estrai in…" Click="OnExport" />
                                 <Separator />
                                 <MenuItem x:Name="CmRename" Header="Rinomina" Click="OnRename" InputGestureText="F2" />
