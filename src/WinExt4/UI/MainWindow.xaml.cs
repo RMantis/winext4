@@ -26,6 +26,9 @@ public partial class MainWindow : Window
     private readonly TempCopies _temp = new();
     private bool _writeBackAlways;
     private bool _askingWriteBack;
+    private readonly PreviewView _preview = new();
+    private readonly DispatcherTimer _previewTimer;
+    private CancellationTokenSource? _previewCts;
 
     private Ext4Volume? _vol;
     private SourceItem? _current;
@@ -52,6 +55,9 @@ public partial class MainWindow : Window
         ChkAllPartitions.IsChecked = _settings.ShowAllPartitions;
         _rescanTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
         _rescanTimer.Tick += (_, _) => { _rescanTimer.Stop(); _ = RescanAsync(); };
+        PreviewHost.Child = _preview;
+        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); _ = LoadPreviewAsync(); };
         _temp.Modified += copy => Dispatcher.BeginInvoke(() => OnTempCopyModified(copy));
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
@@ -859,7 +865,103 @@ public partial class MainWindow : Window
         await NavigateAsync(p);
     }
 
-    private void OnFileSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateUi();
+    private void OnFileSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateUi();
+        if (_settings.ShowPreview)
+        {
+            _previewTimer.Stop();
+            _previewTimer.Start();
+        }
+    }
+
+    // ==================================================================
+    // preview
+
+    private void ApplyPreviewLayout()
+    {
+        bool show = _settings.ShowPreview && _vol is not null;
+        if (!show && PreviewColumn.Width.Value > 0)
+        {
+            _settings.PreviewWidth = PreviewColumn.ActualWidth;
+            _settings.Save();
+        }
+        PreviewColumn.Width = show ? new GridLength(Math.Max(220, _settings.PreviewWidth)) : new GridLength(0);
+        PreviewColumn.MinWidth = show ? 180 : 0;
+        PreviewSplitterColumn.Width = new GridLength(show ? 5 : 0);
+        PreviewHost.Visibility = PreviewSplitter.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        PreviewIcon.Text = show ? "\uE89F" : "\uE8A1";
+    }
+
+    private async void OnTogglePreview(object sender, RoutedEventArgs e)
+    {
+        if (_vol is null) return;
+        _settings.ShowPreview = !_settings.ShowPreview;
+        _settings.Save();
+        ApplyPreviewLayout();
+        if (_settings.ShowPreview) await LoadPreviewAsync();
+    }
+
+    private async Task LoadPreviewAsync()
+    {
+        _previewCts?.Cancel();
+        if (_vol is not { } vol || !_settings.ShowPreview) return;
+        if (FileList.SelectedItems.Count != 1 || FileList.SelectedItem is not EntryItem item)
+        {
+            _preview.Show(FileList.SelectedItems.Count > 1
+                ? new PreviewData { Kind = PreviewKind.Message, Text = $"{FileList.SelectedItems.Count} elementi selezionati" }
+                : null);
+            return;
+        }
+        var cts = new CancellationTokenSource();
+        _previewCts = cts;
+        _preview.ShowLoading(item.Entry.Name);
+        int width = (int)Math.Max(200, PreviewColumn.ActualWidth * VisualTreeHelperDpi());
+        try
+        {
+            var data = await Task.Run(() => PreviewBuilder.Build(vol, item, width, cts.Token), cts.Token);
+            if (!cts.IsCancellationRequested) _preview.Show(data);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Ext4Exception ex)
+        {
+            if (!cts.IsCancellationRequested)
+                _preview.Show(new PreviewData { Kind = PreviewKind.Message, Title = item.Entry.Name, Text = ex.Message });
+        }
+    }
+
+    private double VisualTreeHelperDpi() => System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX;
+
+    private void OnFileListKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Space && FileList.SelectedItem is EntryItem && _vol is not null)
+        {
+            e.Handled = true;
+            ShowQuickLook();
+        }
+        else if (e.Key == Key.Enter && FileList.SelectedItem is EntryItem item)
+        {
+            e.Handled = true;
+            _ = OpenItemAsync(item);
+        }
+    }
+
+    private void ShowQuickLook()
+    {
+        if (_vol is not { } vol || FileList.ItemsSource is not List<EntryItem> items) return;
+        int index = FileList.SelectedIndex;
+        var w = new QuickLookWindow(items, index,
+            (item, width, ct) => Task.Run(() => PreviewBuilder.Build(vol, item, width, ct), ct)) { Owner = this };
+        w.IndexChanged += i =>
+        {
+            FileList.SelectedIndex = i;
+            FileList.ScrollIntoView(FileList.SelectedItem);
+        };
+        w.ShowDialog();
+        (FileList.ItemContainerGenerator.ContainerFromIndex(FileList.SelectedIndex) as ListViewItem)?.Focus();
+    }
 
     private List<EntryItem> Selected() => FileList.SelectedItems.Cast<EntryItem>().ToList();
 
@@ -1069,6 +1171,8 @@ public partial class MainWindow : Window
         BtnRename.IsEnabled = rw && sel == 1 && !busy;
         BtnDelete.IsEnabled = rw && sel > 0 && !busy;
         BtnProperties.IsEnabled = open;
+        BtnPreview.IsEnabled = open;
+        ApplyPreviewLayout();
         BtnClose.IsEnabled = open && !busy;
         BtnUp.IsEnabled = open && _cwdPath != "/";
         BtnRefresh.IsEnabled = PathBox.IsEnabled = open;

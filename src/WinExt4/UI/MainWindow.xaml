@@ -18,12 +18,14 @@
         <KeyBinding Key="Back" Command="{x:Static NavigationCommands.BrowseBack}" />
         <KeyBinding Key="Delete" Command="{x:Static ApplicationCommands.Delete}" />
         <KeyBinding Key="F2" Command="{x:Static ApplicationCommands.SaveAs}" />
+        <KeyBinding Key="P" Modifiers="Alt" Command="{x:Static ApplicationCommands.PrintPreview}" />
     </Window.InputBindings>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static NavigationCommands.Refresh}" Executed="OnRefreshCommand" />
         <CommandBinding Command="{x:Static NavigationCommands.BrowseBack}" Executed="OnUpCommand" />
         <CommandBinding Command="{x:Static ApplicationCommands.Delete}" Executed="OnDeleteCommand" />
         <CommandBinding Command="{x:Static ApplicationCommands.SaveAs}" Executed="OnRenameCommand" />
+        <CommandBinding Command="{x:Static ApplicationCommands.PrintPreview}" Executed="OnTogglePreview" />
     </Window.CommandBindings>
 
     <Grid>
@@ -93,6 +95,10 @@
                     <Button x:Name="BtnDelete" Style="{StaticResource ToolButton}" Click="OnDelete" IsEnabled="False" AutomationProperties.Name="Elimina"
                             ToolTip="Elimina (Canc)">
                         <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
+                    </Button>
+                    <Button x:Name="BtnPreview" Style="{StaticResource ToolButton}" Click="OnTogglePreview" IsEnabled="False"
+                            AutomationProperties.Name="Anteprima" ToolTip="Mostra/nascondi l'anteprima (Alt+P) · Spazio: anteprima grande">
+                        <TextBlock x:Name="PreviewIcon" Style="{StaticResource Icon}" Text="&#xE8A1;" />
                     </Button>
                     <Button x:Name="BtnProperties" Style="{StaticResource ToolButton}" Click="OnProperties" IsEnabled="False" AutomationProperties.Name="Proprietà"
                             ToolTip="Proprietà, permessi e proprietario Linux">
@@ -243,7 +249,12 @@
                     </Border>
                 </DockPanel>
                 <Grid>
-                    <ListView x:Name="FileList" BorderThickness="0" SelectionMode="Extended"
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="200" />
+                        <ColumnDefinition x:Name="PreviewSplitterColumn" Width="0" />
+                        <ColumnDefinition x:Name="PreviewColumn" Width="0" />
+                    </Grid.ColumnDefinitions>
+                    <ListView x:Name="FileList" BorderThickness="0" SelectionMode="Extended" KeyDown="OnFileListKeyDown"
                               MouseDoubleClick="OnItemDoubleClick" SelectionChanged="OnFileSelectionChanged"
                               GridViewColumnHeader.Click="OnColumnHeaderClick"
                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
@@ -297,7 +308,10 @@
                             </GridView>
                         </ListView.View>
                     </ListView>
-                    <StackPanel x:Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
+                    <GridSplitter x:Name="PreviewSplitter" Grid.Column="1" HorizontalAlignment="Stretch"
+                                  Background="{StaticResource BorderBrushLight}" Visibility="Collapsed" />
+                    <Border x:Name="PreviewHost" Grid.Column="2" Padding="12,8,8,8" Visibility="Collapsed" />
+                    <StackPanel x:Name="EmptyState" Grid.ColumnSpan="3" VerticalAlignment="Center" HorizontalAlignment="Center"
                                 MaxWidth="460">
                         <TextBlock Style="{StaticResource Icon}" Text="&#xE88E;" FontSize="44" HorizontalAlignment="Center"
                                    Foreground="{StaticResource BorderBrushLight}" />

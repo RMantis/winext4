@@ -23,6 +23,8 @@ public sealed class AppSettings
     public bool AutoOpenOnInsert { get; set; } = true;
     public bool ShowAllPartitions { get; set; }
     public bool OpenExplorerAfterMount { get; set; } = true;
+    public bool ShowPreview { get; set; } = true;
+    public double PreviewWidth { get; set; } = 340;
     public string PreferredDriveLetter { get; set; } = "";
     public List<string> RecentImages { get; set; } = new();
 

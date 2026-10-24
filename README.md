@@ -21,7 +21,8 @@ WinFsp serve solo per il pulsante «Monta su Windows». Tutto il resto funziona 
 3. Puoi:
    - **sfogliare** i file, con permessi `rwx`, uid:gid e link simbolici;
    - **Estrai** per copiare file o cartelle in Windows;
-   - fare doppio clic su un file per aprirne una copia temporanea, oppure usare **Apri con…** nel menu contestuale (i programmi registrati per quel tipo di file, con le loro icone, più «Scegli un'altra app…»).
+   - vedere l'**anteprima** del file selezionato nel pannello a destra (Alt+P per mostrarlo o nasconderlo): testo UTF-8/Latin-1, immagini PNG/JPEG/GIF/BMP/TIFF/ICO (e WebP/HEIC/AVIF se Windows ha i codec), vista esadecimale per gli altri file. La **barra spaziatrice** apre l'anteprima grande, ← → passano al file vicino;
+   - fare doppio clic (o Invio) su un file per aprirne una copia temporanea, oppure usare **Apri con…** nel menu contestuale (i programmi registrati per quel tipo di file, con le loro icone, più «Scegli un'altra app…»).
 4. **Sblocca scrittura** riapre la partizione in lettura/scrittura:
    - la partizione viene bloccata e smontata per Windows, così nessun altro programma la tocca;
    - se il journal contiene transazioni non applicate (disco staccato da Linux senza smontarlo), vengono riprodotte prima di scrivere;
@@ -122,7 +123,6 @@ Le prossime funzioni previste sono descritte in [docs/ROADMAP.md](docs/ROADMAP.m
 - controllo dei GUID delle partizioni;
 - azzeramento dello spazio libero ed export compresso (zstd/gz/xz/VHDX);
 - apertura di immagini dentro archivi (`.tar.gz`, `.img.xz`, `.zip`…) senza estrarle;
-- anteprima di testo e immagini;
 - proprietà complete della partizione, con modifica di etichetta, UUID, spazio riservato, nome e tipo della partizione;
 - fsck integrato;
 - modalità «bozza», in cui le modifiche restano in un overlay finché non le applichi o le esporti.

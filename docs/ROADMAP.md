@@ -11,7 +11,7 @@ Idee in ordine di priorità suggerita. ✅ = implementato. L'ordine segue il rap
 | 5 | fsck integrato | — | media |
 | 6 | Modifiche in sospeso (overlay / bozza) | 1 per l'impronta della sorgente, 5 è utile | grande |
 | 7 | ✅ «Apri con…» per i file dentro ext e integrazione con «Apri con» di Windows | — | piccola |
-| 8 | Anteprima di testo e immagini nella finestra | — | piccola |
+| 8 | ✅ Anteprima di testo e immagini nella finestra | — | piccola |
 | 9 | Proprietà della partizione: tutte le informazioni e modifica dei parametri modificabili | 2 per i GUID | media |
 
 I punti 7, 8 e 9 sono miglioramenti dell'interfaccia indipendenti dagli altri: si possono fare in qualsiasi momento, anche per primi.
@@ -292,7 +292,9 @@ Sorgente + delta → nuovo `.img`, con il `.md5` del punto 1. La sorgente resta 
 
 ---
 
-## 8. Anteprima di file di testo e immagini
+## 8. ✅ Anteprima di file di testo e immagini
+
+*Implementato* (pannello, anteprima grande con la barra spaziatrice, vista esadecimale, riconoscimento del tipo dal contenuto). Resta da fare: PDF e documenti tramite i *preview handler* di Windows.
 
 ### Obiettivo
 
