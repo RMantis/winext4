@@ -1585,6 +1585,10 @@ E4_API const char *e4_strerror(int code)
 		return "Not a WinExt4 draft file, or the file is damaged";
 	case E4_EDRAFT_APPLIED:
 		return "The draft has already been applied";
+	case E4_EPART_NOT_FOUND:
+		return "Partition not found in the partition table";
+	case E4_EPART_STYLE:
+		return "Change not possible with this partition table";
 	}
 	if (code > 0 && code < E4_ERRNO_MAX)
 		return strerror(code);

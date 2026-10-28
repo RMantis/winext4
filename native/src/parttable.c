@@ -322,8 +322,10 @@ static int edit_disk(const wchar_t *path, int number, const e4_part_edit *e)
 			continue;
 		found = 1;
 		if (layout->PartitionStyle == PARTITION_STYLE_GPT) {
-			if (e->mask & E4_EDIT_MBR_TYPE)
+			if (e->mask & E4_EDIT_MBR_TYPE) {
+				ret = E4_EPART_STYLE;
 				goto out;
+			}
 			if ((e->mask & E4_EDIT_GPT_TYPE) &&
 			    pt_parse_guid(e->gpt_type, (unsigned char *) &pi->Gpt.PartitionType))
 				goto out;
@@ -340,17 +342,32 @@ static int edit_disk(const wchar_t *path, int number, const e4_part_edit *e)
 			if (e->mask & E4_EDIT_GPT_ATTRIBUTES)
 				pi->Gpt.Attributes = e->gpt_attributes;
 		} else if (layout->PartitionStyle == PARTITION_STYLE_MBR) {
-			if (e->mask & ~E4_EDIT_MBR_TYPE || e->mbr_type <= 0 || e->mbr_type > 255)
+			if (e->mask & ~E4_EDIT_MBR_TYPE) {
+				ret = E4_EPART_STYLE;
+				goto out;
+			}
+			if (e->mbr_type <= 0 || e->mbr_type > 255)
 				goto out;
 			pi->Mbr.PartitionType = (BYTE) e->mbr_type;
+		} else {
+			ret = E4_EPART_STYLE;
+			goto out;
 		}
 		pi->RewritePartition = TRUE;
 	}
-	if (!found)
+	if (!found) {
+		ret = E4_EPART_NOT_FOUND;
 		goto out;
-	ret = DeviceIoControl(h, IOCTL_DISK_SET_DRIVE_LAYOUT_EX, layout,
-			      ret_bytes, NULL, 0, &ret_bytes, NULL) ? 0 :
-	      GetLastError() == ERROR_ACCESS_DENIED ? EACCES : EIO;
+	}
+	if (!DeviceIoControl(h, IOCTL_DISK_SET_DRIVE_LAYOUT_EX, layout,
+			     ret_bytes, NULL, 0, &ret_bytes, NULL)) {
+		DWORD err = GetLastError();
+
+		ret = err == ERROR_ACCESS_DENIED ? EACCES : EIO;
+		fprintf(stderr, "ext4core: IOCTL_DISK_SET_DRIVE_LAYOUT_EX failed, Win32 error %lu\n", err);
+		goto out;
+	}
+	ret = 0;
 	if (!ret)
 		DeviceIoControl(h, IOCTL_DISK_UPDATE_PROPERTIES, NULL, 0, NULL, 0,
 				&ret_bytes, NULL);

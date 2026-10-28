@@ -35,6 +35,8 @@ extern "C" {
 #define E4_EDRAFT_MISMATCH 904 /* the draft was made from a different/changed source */
 #define E4_EDRAFT_BAD 905      /* not a draft file, or damaged header */
 #define E4_EDRAFT_APPLIED 906  /* the draft has already been (or is being) applied */
+#define E4_EPART_NOT_FOUND 907 /* no such partition number in the partition table */
+#define E4_EPART_STYLE 908     /* change not possible with this partition table (MBR/GPT) */
 
 typedef struct e4_fs e4_fs;
 

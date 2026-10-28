@@ -28,6 +28,11 @@ public static class Errno
     public const int ENOTEXT = 901;
     public const int EUNSUPP_RW = 902;
     public const int ENEEDS_FSCK = 903;
+    public const int EDRAFT_MISMATCH = 904;
+    public const int EDRAFT_BAD = 905;
+    public const int EDRAFT_APPLIED = 906;
+    public const int EPART_NOT_FOUND = 907;
+    public const int EPART_STYLE = 908;
 }
 
 public sealed class Ext4Exception : Exception
@@ -63,7 +68,12 @@ public sealed class Ext4Exception : Exception
             Errno.EVOLUME_LOCK => "Il volume è in uso da un altro programma e non può essere bloccato per la scrittura",
             Errno.ENOTEXT => "Nessun filesystem ext2/ext3/ext4 trovato",
             Errno.EUNSUPP_RW => "Il filesystem usa funzionalità che non possono essere scritte in sicurezza",
-            Errno.ENEEDS_FSCK => "Il filesystem contiene errori: eseguire e2fsck prima di scrivere",
+            Errno.ENEEDS_FSCK => "Il filesystem contiene errori: controllalo e riparalo («Controlla e ripara») prima di scrivere",
+            Errno.EDRAFT_MISMATCH => "La bozza è stata creata da un'altra sorgente, oppure la sorgente è cambiata dopo",
+            Errno.EDRAFT_BAD => "Il file non è una bozza valida",
+            Errno.EDRAFT_APPLIED => "La bozza è già stata applicata",
+            Errno.EPART_NOT_FOUND => "Partizione non trovata nella tabella delle partizioni",
+            Errno.EPART_STYLE => "Modifica non possibile con questo tipo di tabella delle partizioni (MBR/GPT)",
             _ => NativeMessage(code),
         };
         return operation is null ? text : $"{operation}: {text}";

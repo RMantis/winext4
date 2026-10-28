@@ -30,11 +30,18 @@ try {
     Check ($s.GptStatus -eq ([WinExt4.Core.GptStatus]'Checked,PrimaryOk,BackupOk,CopiesMatch')) "GPT copies verified ($($s.GptStatus))"
     Check (-not [WinExt4.Core.Imaging]::SystemDisks().Contains($n)) 'VHD is not a system disk'
     Check ([WinExt4.Core.Imaging]::SystemDisks().Count -ge 1) "system disk detected ($([WinExt4.Core.Imaging]::SystemDisks() -join ','))"
-    [WinExt4.Core.PartitionTypes]::Edit($s, $null, $null, 'vhd-test', [uint64]9223372036854775808)
-    Start-Sleep 2
-    $s = DiskSource $n
-    Check ($s.GptName -eq 'vhd-test' -and $s.GptAttributes -eq [uint64]9223372036854775808) "name/attributes changed via IOCTL ($($s.GptName), 0x$('{0:X}' -f $s.GptAttributes))"
-    Check ($s.GptStatus -band 4) 'GPT copies still consistent'
+    # a failure here must not stop the other sections
+    try {
+        [WinExt4.Core.PartitionTypes]::Edit($s, $null, $null, 'vhd-test', [uint64]9223372036854775808)
+        Start-Sleep 2
+        $s = DiskSource $n
+        Check ($s.GptName -eq 'vhd-test' -and $s.GptAttributes -eq [uint64]9223372036854775808) "name/attributes changed via IOCTL ($($s.GptName), 0x$('{0:X}' -f $s.GptAttributes))"
+        Check ($s.GptStatus -band 4) 'GPT copies still consistent'
+    }
+    catch {
+        Check $false "partition edit via IOCTL: $($_.Exception.InnerException.Message) (container $($s.Container), partition $($s.PartitionNumber))"
+        $s = DiskSource $n
+    }
 
     "== superblock edit on the raw partition"
     & $cli tune $s.Device 0 1 VHD-LABEL; Check ($LASTEXITCODE -eq 0) 'label set on \\.\HarddiskNPartitionM'
